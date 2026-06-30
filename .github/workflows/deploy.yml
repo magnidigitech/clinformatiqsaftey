@@ -1,0 +1,52 @@
+name: Deploy to Hostinger VPS
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            # Navigate to the application directory on the VPS
+            # (Make sure this directory exists and is owned by the SSH user)
+            cd /var/www/clinformatiq || cd ~/clinformatiq || exit 1
+            
+            # Fetch and reset to remote main/master branch to avoid any conflicts
+            git fetch --all
+            git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+            
+            # Load NVM (Node Version Manager) if installed
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # Install dependencies using pnpm
+            pnpm install --frozen-lockfile
+            
+            # Generate the Prisma database client
+            npx prisma generate
+            
+            # Run migrations to update the database schema
+            npx prisma db push --accept-data-loss
+            
+            # Build the static frontend build assets (writes to /dist)
+            pnpm run build:web
+            
+            # Reload or start the Node API server with PM2
+            pm2 reload clinformatiq || pm2 start server/index.js --name "clinformatiq"
+            
+            # Save the PM2 process list to load on reboot
+            pm2 save

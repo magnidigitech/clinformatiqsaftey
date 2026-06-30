@@ -1,0 +1,54 @@
+/* Component-level overrides */
+@tailwind components;
+
+@layer components {
+  /* Sidebar transition */
+  .sidebar-transition {
+    @apply transition-all duration-300 ease-in-out;
+  }
+
+  /* Card hover effect */
+  .card-hover {
+    @apply transition-shadow duration-200 hover:shadow-sm;
+  }
+
+  /* Status badge pulse for active items */
+  .status-pulse {
+    @apply relative;
+  }
+
+  .status-pulse::before {
+    content: '';
+    @apply absolute -left-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-current opacity-75;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Table row hover */
+  .table-row-interactive {
+    @apply cursor-pointer transition-colors hover:bg-muted/50;
+  }
+
+  /* Form field group spacing */
+  .form-group {
+    @apply space-y-2;
+  }
+
+  /* Page container */
+  .page-container {
+    @apply mx-auto w-full max-w-7xl space-y-6 p-6;
+  }
+
+  /* Modal overlay animation */
+  .modal-overlay-enter {
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}

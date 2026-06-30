@@ -1,0 +1,304 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ORGANISATIONS ───────────────────────────────────────────────
+model Organisation {
+  org_id     Int      @id @default(autoincrement())
+  name       String
+  type       String   @default("COLLEGE")
+  created_at DateTime @default(now())
+
+  users User[]
+  cases SptOrgCase[]
+
+  @@map("organisations")
+}
+
+// ─── USERS ───────────────────────────────────────────────────────
+model User {
+  user_id       Int      @id @default(autoincrement())
+  username      String   @unique
+  password_hash String
+  role          String   @default("STUDENT")
+  org_id        Int
+  full_name     String
+  email         String
+  status        String   @default("ACTIVE")
+  created_at    DateTime @default(now())
+
+  organisation Organisation         @relation(fields: [org_id], references: [org_id])
+  cases        SptOrgCase[]
+  assigned_cases SptOrgCase[]       @relation("AssignedCases")
+  workflow_logs WorkflowLog[]
+  feedback     InstructorFeedback[]
+  audit_logs   AuditLog[]
+
+  @@map("spt_org_users")
+}
+
+// ─── CASES (spt_org_cases) ────────────────────────────────────────
+model SptOrgCase {
+  case_id        Int       @id @default(autoincrement())
+  case_number    String    @unique
+  student_id     Int
+  org_id         Int
+  workflow_state String    @default("DRAFT")
+  receipt_date   DateTime?
+  aware_date     DateTime?
+  case_type      String?
+  serious_flag   String    @default("N")
+  locked_by      String?
+  lock_time      DateTime?
+  assigned_to    Int?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  student       User               @relation(fields: [student_id], references: [user_id])
+  assignee      User?              @relation("AssignedCases", fields: [assigned_to], references: [user_id])
+  organisation  Organisation       @relation(fields: [org_id], references: [org_id])
+  patient       SptOrgCad?
+  products      SptOrgProduct[]
+  events        SptOrgEvent[]
+  reporters     Reporter[]
+  workflow_logs WorkflowLog[]
+  feedback      InstructorFeedback[]
+  audit_logs    AuditLog[]
+  action_items  CaseActionItem[]
+
+  @@map("spt_org_cases")
+}
+
+// ─── PATIENT DATA (spt_org_cad) ────────────────────────────────────
+model SptOrgCad {
+  patient_id      Int       @id @default(autoincrement())
+  case_id         Int       @unique
+  patient_code    String?
+  dob             DateTime?
+  age_value       Int?
+  age_unit        String?
+  sex             String?
+  weight_kg       Int?
+  height_cm       Int?
+  ethnicity       String?
+  medical_history String?
+  concomitant_meds String?
+
+  case SptOrgCase @relation(fields: [case_id], references: [case_id])
+
+  @@map("spt_org_cad")
+}
+
+// ─── PRODUCTS / DRUGS (spt_org_product) ────────────────────────────
+model SptOrgProduct {
+  product_id   Int       @id @default(autoincrement())
+  case_id      Int
+  drug_name    String
+  dose         String?
+  dose_unit    String?
+  route        String?
+  frequency    String?
+  start_date   DateTime?
+  stop_date    DateTime?
+  suspect_flag String    @default("SUSPECT")
+  batch_number String?
+  indication   String?
+  action_taken String?
+  dechallenge  String?
+  rechallenge  String?
+
+  case   SptOrgCase          @relation(fields: [case_id], references: [case_id])
+  dosage SptOrgDosageRegimen[]
+  causalities SptOrgEventCausality[]
+
+  @@map("spt_org_product")
+}
+
+// ─── DOSAGE REGIMEN (spt_org_dosage_regimen) ───────────────────────
+model SptOrgDosageRegimen {
+  regimen_id  Int       @id @default(autoincrement())
+  product_id  Int
+  dose_number Int       @default(1)
+  dose_amount String?
+  dose_unit   String?
+  dose_route  String?
+  dose_freq   String?
+  dose_start  DateTime?
+  dose_end    DateTime?
+
+  product SptOrgProduct @relation(fields: [product_id], references: [product_id])
+
+  @@map("spt_org_dosage_regimen")
+}
+
+// ─── ADVERSE EVENTS (spt_org_event) ────────────────────────────────
+model SptOrgEvent {
+  event_id         Int       @id @default(autoincrement())
+  case_id          Int
+  chapter          String?
+  block            String?
+  category         String?
+  entity_title     String?
+  entity_code      String?
+  onset_date       DateTime?
+  end_date         DateTime?
+  severity         String?
+  outcome          String?
+  serious_criteria String?
+  narrative        String?
+
+  case        SptOrgCase             @relation(fields: [case_id], references: [case_id])
+  causalities SptOrgEventCausality[]
+
+  @@map("spt_org_event")
+}
+
+// ─── EVENT-DRUG CAUSALITY (spt_org_event_causality) ────────────────
+model SptOrgEventCausality {
+  causality_id         Int     @id @default(autoincrement())
+  event_id             Int
+  product_id           Int
+  causality_who        String?
+  causality_reported   String?
+  causality_determined String?
+  seriousness          String?
+  listedness_data      String?
+  naranjo_score        Int?
+  naranjo_detail       String?
+
+  event   SptOrgEvent   @relation(fields: [event_id], references: [event_id])
+  product SptOrgProduct @relation(fields: [product_id], references: [product_id])
+
+  @@map("spt_org_event_causality")
+}
+
+// ─── REPORTERS ──────────────────────────────────────────────────────
+model Reporter {
+  reporter_id   Int     @id @default(autoincrement())
+  case_id       Int
+  reporter_type String?
+  first_name    String?
+  last_name     String?
+  qualification String?
+  country       String?
+  institution   String?
+  email         String?
+
+  case SptOrgCase @relation(fields: [case_id], references: [case_id])
+
+  @@map("spt_org_contact_log")
+}
+
+// ─── MEDDRA TERMS ───────────────────────────────────────────────────
+model MeddraTerm {
+  term_id        Int    @id @default(autoincrement())
+  pt_code        String
+  pt_name        String
+  llt_code       String?
+  llt_name       String?
+  hlt_code       String?
+  hlt_name       String?
+  hlgt_code      String?
+  hlgt_name      String?
+  soc_code       String?
+  soc_name       String?
+  meddra_version String  @default("26.1")
+  current_flag   String  @default("Y")
+
+  @@index([pt_name])
+  @@index([llt_name])
+  @@map("spt_org_meddra_terms")
+}
+
+// ─── WORKFLOW LOG ───────────────────────────────────────────────────
+model WorkflowLog {
+  log_id      Int      @id @default(autoincrement())
+  case_id     Int
+  from_state  String?
+  to_state    String
+  actioned_by Int
+  action_time DateTime @default(now())
+  comments    String?
+
+  case SptOrgCase @relation(fields: [case_id], references: [case_id])
+  user User       @relation(fields: [actioned_by], references: [user_id])
+
+  @@map("spt_org_workflow_routing")
+}
+
+// ─── ACTION ITEMS (spt_org_case_action_items) ──────────────────────
+model CaseActionItem {
+  action_id    Int       @id @default(autoincrement())
+  case_id      Int
+  action_type  String
+  description  String?
+  due_date     DateTime?
+  status       String    @default("OPEN")
+  assigned_to  Int?
+  completed_at DateTime?
+  created_at   DateTime  @default(now())
+
+  case SptOrgCase @relation(fields: [case_id], references: [case_id])
+
+  @@map("spt_org_case_action_items")
+}
+
+// ─── INSTRUCTOR FEEDBACK ────────────────────────────────────────────
+model InstructorFeedback {
+  feedback_id   Int      @id @default(autoincrement())
+  case_id       Int
+  instructor_id Int
+  score         Int?
+  comments      String?
+  decision      String?
+  created_at    DateTime @default(now())
+
+  case       SptOrgCase @relation(fields: [case_id], references: [case_id])
+  instructor User       @relation(fields: [instructor_id], references: [user_id])
+
+  @@map("instructor_feedback")
+}
+
+// ─── AUDIT LOG (spt_org_audit_log) ─────────────────────────────────
+model AuditLog {
+  audit_id    Int       @id @default(autoincrement())
+  case_id     Int?
+  table_name  String
+  column_name String?
+  old_value   String?
+  new_value   String?
+  changed_by  Int
+  changed_at  DateTime  @default(now())
+  action      String    @default("UPDATE")
+
+  case SptOrgCase? @relation(fields: [case_id], references: [case_id])
+  user User         @relation(fields: [changed_by], references: [user_id])
+
+  @@map("spt_org_audit_log")
+}
+
+// ─── REPORT TYPES LOOKUP (spt_org_report_types) ────────────────────
+model ReportType {
+  report_type_id Int     @id @default(autoincrement())
+  code           String  @unique
+  label          String
+  deadline_days  Int?
+  agency         String?
+
+  @@map("spt_org_report_types")
+}
+
+// ─── COUNTRIES LOOKUP (spt_org_countries) ──────────────────────────
+model Country {
+  country_id Int    @id @default(autoincrement())
+  iso_code   String @unique
+  name       String
+  region     String?
+
+  @@map("spt_org_countries")
+}

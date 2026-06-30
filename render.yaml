@@ -1,0 +1,40 @@
+databases:
+  - name: pharmavigil-db
+    databaseName: pharmavigil
+    user: pharmavigil_user
+    plan: free
+
+services:
+  - type: web
+    name: pharmavigil-api
+    runtime: node
+    plan: free
+    buildCommand: pnpm install && npx prisma generate && npx prisma db push --accept-data-loss
+    startCommand: pnpm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pharmavigil-db
+          property: connectionString
+
+  - type: web
+    name: pharmavigil-web
+    runtime: static
+    buildCommand: pnpm install && pnpm run build:web
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: pharmavigil-api
+          envVarKey: RENDER_EXTERNAL_URL
