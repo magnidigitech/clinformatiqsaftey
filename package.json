@@ -79,5 +79,14 @@
       "icon": "public/fc_logo.png",
       "category": "public.app-category.medical"
     }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "electron",
+      "esbuild",
+      "prisma"
+    ]
   }
 }
