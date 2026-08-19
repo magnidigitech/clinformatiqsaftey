@@ -17,6 +17,14 @@ export async function loginUser(username, password) {
 }
 
 /**
+ * Generic login for any role.
+ */
+export async function login(username, password) {
+  const response = await api.post('/auth/login', { username, password });
+  return response.data.data;
+}
+
+/**
  * Register admin.
  */
 export async function registerAdmin(data) {

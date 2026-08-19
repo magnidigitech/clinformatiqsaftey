@@ -14,14 +14,47 @@ const authenticate = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Fetch fresh user data from DB to avoid stale org_id from JWT
+    // Fetch fresh user data from DB to avoid stale org_id or status from JWT
     const dbUser = await prisma.user.findUnique({
       where: { user_id: decoded.user_id },
-      select: { user_id: true, username: true, role: true, org_id: true, status: true },
+      select: { 
+        user_id: true, 
+        username: true, 
+        role: true, 
+        org_id: true, 
+        status: true,
+        batch_id: true,
+        organisation: { select: { status: true } },
+        batch: { select: { status: true } }
+      },
     });
 
     if (!dbUser || dbUser.status !== 'ACTIVE') {
       const error = new Error('User account is inactive or not found.');
+      error.statusCode = 401;
+      throw error;
+    }
+
+    if (dbUser.role === 'STUDENT') {
+      if (dbUser.organisation && dbUser.organisation.status === 'INACTIVE') {
+        const error = new Error('Your College / Organisation is currently inactive.');
+        error.statusCode = 401;
+        throw error;
+      }
+      if (dbUser.batch && dbUser.batch.status === 'INACTIVE') {
+        const error = new Error('Your assigned Batch is currently inactive.');
+        error.statusCode = 401;
+        throw error;
+      }
+    }
+
+    // Check if session has been revoked
+    const session = await prisma.userSession.findUnique({
+      where: { token },
+    });
+
+    if (session && !session.is_active) {
+      const error = new Error('Session has been revoked.');
       error.statusCode = 401;
       throw error;
     }

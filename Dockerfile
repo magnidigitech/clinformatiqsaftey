@@ -1,19 +1,17 @@
 # Build Stage
 FROM node:20-alpine AS builder
 WORKDIR /app
-RUN npm install -g pnpm
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package*.json ./
+RUN npm install
 COPY . .
 RUN npx prisma generate
-RUN pnpm run build:web
+RUN npm run build:web
 
 # Production Runner Stage
 FROM node:20-alpine AS runner
 WORKDIR /app
-RUN npm install -g pnpm
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --prod --frozen-lockfile
+COPY package*.json ./
+RUN npm install --omit=dev
 
 # Copy build artifacts and source code
 COPY --from=builder /app/dist ./dist
@@ -28,3 +26,4 @@ EXPOSE 3001
 
 # Run database synchronization and start the server
 CMD npx prisma db push --accept-data-loss && node server/index.js
+

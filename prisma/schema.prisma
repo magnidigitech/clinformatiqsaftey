@@ -7,17 +7,34 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── ORGANISATIONS ───────────────────────────────────────────────
+// ─── ORGANISATIONS (COLLEGES & IN-HOUSE) ──────────────────────────
 model Organisation {
   org_id     Int      @id @default(autoincrement())
   name       String
-  type       String   @default("COLLEGE")
+  type       String   @default("COLLEGE") // "COLLEGE" | "IN_HOUSE"
+  status     String   @default("ACTIVE")  // "ACTIVE" | "INACTIVE"
   created_at DateTime @default(now())
 
-  users User[]
-  cases SptOrgCase[]
+  users   User[]
+  batches Batch[]
+  cases   SptOrgCase[]
 
   @@map("organisations")
+}
+
+// ─── BATCHES (CLASSES / COHORTS) ──────────────────────────────────
+model Batch {
+  batch_id    Int      @id @default(autoincrement())
+  name        String
+  org_id      Int
+  description String?
+  status      String   @default("ACTIVE")
+  created_at  DateTime @default(now())
+
+  organisation Organisation @relation(fields: [org_id], references: [org_id], onDelete: Cascade)
+  users        User[]
+
+  @@map("spt_org_batches")
 }
 
 // ─── USERS ───────────────────────────────────────────────────────
@@ -26,20 +43,39 @@ model User {
   username      String   @unique
   password_hash String
   role          String   @default("STUDENT")
-  org_id        Int
+  org_id        Int?
+  batch_id      Int?
   full_name     String
   email         String
   status        String   @default("ACTIVE")
   created_at    DateTime @default(now())
 
-  organisation Organisation         @relation(fields: [org_id], references: [org_id])
-  cases        SptOrgCase[]
+  organisation   Organisation?        @relation(fields: [org_id], references: [org_id], onDelete: SetNull)
+  batch          Batch?               @relation(fields: [batch_id], references: [batch_id], onDelete: SetNull)
+  cases          SptOrgCase[]
   assigned_cases SptOrgCase[]       @relation("AssignedCases")
-  workflow_logs WorkflowLog[]
-  feedback     InstructorFeedback[]
-  audit_logs   AuditLog[]
+  workflow_logs  WorkflowLog[]
+  feedback       InstructorFeedback[]
+  audit_logs     AuditLog[]
+  sessions       UserSession[]
 
   @@map("spt_org_users")
+}
+
+// ─── USER SESSIONS ───────────────────────────────────────────────
+model UserSession {
+  session_id  Int      @id @default(autoincrement())
+  user_id     Int
+  token       String   @unique
+  ip_address  String?
+  user_agent  String?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  last_active DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@map("spt_org_user_sessions")
 }
 
 // ─── CASES (spt_org_cases) ────────────────────────────────────────

@@ -10,6 +10,8 @@ const meddraRoutes = require('./routes/meddra.routes');
 const instructorRoutes = require('./routes/instructor.routes');
 const adminRoutes = require('./routes/admin.routes');
 const usersRoutes = require('./routes/users.routes');
+const collegesRoutes = require('./routes/colleges.routes');
+const batchesRoutes = require('./routes/batches.routes');
 const icdRoutes = require('./routes/icd.routes');
 
 const app = express();
@@ -26,6 +28,8 @@ app.use('/api/meddra', meddraRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/colleges', collegesRoutes);
+app.use('/api/batches', batchesRoutes);
 app.use('/api/icd', icdRoutes);
 
 app.get('/api/health', (req, res) => {

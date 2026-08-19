@@ -7,6 +7,7 @@ router.post('/register-admin', authController.registerAdmin);
 router.post('/register-user', authController.registerUser);
 router.post('/login-admin', authController.loginAdmin);
 router.post('/login-user', authController.loginUser);
+router.post('/login', authController.loginGeneric);
 router.get('/organisations', authController.getOrganisations);
 router.post('/logout', authMiddleware, authController.logout);
 router.get('/me', authMiddleware, authController.me);

@@ -18,6 +18,7 @@ import WorkflowPage from './pages/WorkflowPage';
 import InstructorPage from './pages/InstructorPage';
 import AdminPage from './pages/AdminPage';
 import SettingsPage from './pages/SettingsPage';
+import UsersPage from './pages/UsersPage';
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { isAuthenticated, user } = useAuth();
@@ -77,6 +78,7 @@ export default function App() {
       <Route path="/register" element={<UserRegisterPage />} />
       <Route path="/admin-login" element={<AdminLoginPage />} />
       <Route path="/admin-register" element={<AdminRegisterPage />} />
+      <Route path="/users" element={<UsersPage />} />
       
       <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route path="/" element={<DashboardPage />} />

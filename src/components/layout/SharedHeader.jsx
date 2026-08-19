@@ -7,6 +7,8 @@ import CaseToolbar from './CaseToolbar';
 import ClinformatiqLogo from './ClinformatiqLogo';
 import ChangePasswordModal from '../ChangePasswordModal';
 
+import { User, Key, LogOut, Shield, ChevronDown, Laptop, Home as HomeIcon } from 'lucide-react';
+
 export default function SharedHeader() {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -14,6 +16,7 @@ export default function SharedHeader() {
   const { cases } = useCases();
 
   const [isPasswordModalOpen, setPasswordModalOpen] = useState(false);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
 
   // Determine current case ID from URL if we are viewing a case
   const pathParts = location.pathname.split('/');
@@ -45,6 +48,7 @@ export default function SharedHeader() {
   };
 
   const activeTabName = getActiveTab();
+  const userInitial = user?.full_name ? user.full_name.charAt(0).toUpperCase() : user?.username ? user.username.charAt(0).toUpperCase() : 'U';
 
   return (
     <div className="glass-panel border-b border-white/40 flex flex-col z-50 sticky top-0 shrink-0">
@@ -53,14 +57,89 @@ export default function SharedHeader() {
         <div className="flex items-center gap-3">
           <ClinformatiqLogo sizeClass="h-10" />
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="text-slate-500 font-medium hidden sm:inline">
-            Welcome <b className="text-slate-800">{user?.full_name}</b> <span className="opacity-50 mx-1">|</span> {currentDate}
+
+        <div className="flex items-center gap-3">
+          <span className="text-slate-500 text-xs font-medium hidden lg:inline">
+            {currentDate}
           </span>
-          <div className="flex overflow-hidden rounded-full shadow-sm border border-slate-200 bg-white/50 backdrop-blur-sm">
-            <Link to="/" className="text-brand-dark hover:bg-brand-light px-4 py-1.5 transition-colors font-semibold text-xs">Home</Link>
-            <button className="text-brand-dark hover:bg-brand-light px-4 py-1.5 border-l border-slate-200 transition-colors font-semibold text-xs">Help</button>
-            <button onClick={logout} className="text-brand-dark hover:bg-brand-light px-4 py-1.5 border-l border-slate-200 transition-colors font-semibold text-xs">Logout</button>
+
+          <Link 
+            to="/" 
+            className="hidden sm:flex items-center gap-1 text-slate-600 hover:text-teal-800 hover:bg-teal-50/60 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+          >
+            <HomeIcon className="h-3.5 w-3.5" />
+            Home
+          </Link>
+
+          {/* Profile Dropdown with all Actions */}
+          <div className="relative group">
+            <button
+              onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+              className="flex items-center gap-2.5 p-1.5 pr-3 rounded-full hover:bg-slate-100/80 border border-slate-200/80 transition-all bg-white/70 shadow-2xs"
+            >
+              <div className="h-7 w-7 rounded-full bg-[#0F766E] text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                {userInitial}
+              </div>
+              <div className="text-left hidden sm:block leading-tight">
+                <p className="text-xs font-bold text-slate-800 truncate max-w-[130px]">{user?.full_name || user?.username}</p>
+                <p className="text-[10px] font-semibold text-[#0F766E]">{user?.role === 'ADMIN' ? 'Administrator' : user?.role || 'User'}</p>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400 group-hover:text-slate-700 transition-transform" />
+            </button>
+
+            {/* Profile Dropdown Menu */}
+            <div className="absolute right-0 top-[110%] w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 hidden group-hover:block animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-9 w-9 rounded-full bg-[#0F766E] text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+                    {userInitial}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-slate-900 truncate">{user?.full_name || 'System User'}</p>
+                    <p className="text-[11px] text-slate-500 font-mono truncate">@{user?.username}</p>
+                    <p className="text-[10px] text-slate-400 truncate">{user?.email || 'admin@clinformatiq.com'}</p>
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                    <Shield className="h-3 w-3 text-[#0F766E]" />
+                    {user?.role === 'ADMIN' ? 'Global Administrator' : user?.role || 'Student'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="py-1">
+                <button
+                  onClick={() => {
+                    setPasswordModalOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50 hover:text-teal-900 transition-colors text-left"
+                >
+                  <Key className="h-4 w-4 text-[#0F766E]" />
+                  <span>Change Password</span>
+                </button>
+
+                {user?.role === 'ADMIN' && (
+                  <Link
+                    to="/users"
+                    className="flex items-center gap-2.5 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50 hover:text-teal-900 transition-colors"
+                  >
+                    <Laptop className="h-4 w-4 text-[#0F766E]" />
+                    <span>User & Session Control</span>
+                  </Link>
+                )}
+              </div>
+
+              <div className="border-t border-slate-100 pt-1 mt-1">
+                <button
+                  onClick={logout}
+                  className="w-full flex items-center gap-2.5 px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors text-left"
+                >
+                  <LogOut className="h-4 w-4 text-red-500" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -194,7 +273,7 @@ export default function SharedHeader() {
                   <div className={cn(dropdownContainerClass, "w-60")}>
                     <button onClick={() => setPasswordModalOpen(true)} className={cn(dropdownItemClass, "w-[calc(100%-8px)] text-left")}><span>Change Password</span></button>
                     <button onClick={() => window.dispatchEvent(new CustomEvent('open_icd_browser'))} className={cn(dropdownItemClass, "w-[calc(100%-8px)] text-left")}><span>MedDRA Browser</span></button>
-                    <div className={cn(dropdownItemClass, "opacity-50 cursor-not-allowed")} title="Feature not available"><span>User Login List</span></div>
+                    <Link to="/users" className={cn(dropdownItemClass, "text-emerald-700 font-bold hover:bg-emerald-50")}><span>User & Session Control</span></Link>
                     
                     <div className={cn(dropdownItemClass, "opacity-50 cursor-not-allowed")} title="Feature not available">
                       <span>Logs</span>

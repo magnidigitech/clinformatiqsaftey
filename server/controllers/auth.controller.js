@@ -1,4 +1,5 @@
 // server/controllers/auth.controller.js – Authentication logic
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
@@ -64,6 +65,12 @@ async function registerAdmin(req, res, next) {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
+    const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
+    const user_agent = req.headers['user-agent'] || 'Unknown Device';
+    await prisma.userSession.create({
+      data: { user_id: result.user.user_id, token, ip_address, user_agent, is_active: true }
+    }).catch(() => {});
+
     const { password_hash: _, ...userSafe } = result.user;
 
     res.status(201).json({
@@ -128,6 +135,12 @@ async function registerUser(req, res, next) {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
+    const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
+    const user_agent = req.headers['user-agent'] || 'Unknown Device';
+    await prisma.userSession.create({
+      data: { user_id: result.user.user_id, token, ip_address, user_agent, is_active: true }
+    }).catch(() => {});
+
     const { password_hash: _, ...userSafe } = result.user;
 
     res.status(201).json({
@@ -182,10 +195,18 @@ async function loginAdmin(req, res, next) {
         username: user.username,
         role: user.role,
         org_id: user.org_id,
+        jti: crypto.randomUUID(),
       },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
+
+    const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
+    const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    await prisma.userSession.create({
+      data: { user_id: user.user_id, token, ip_address, user_agent, is_active: true }
+    }).catch(() => {});
 
     const { password_hash: _, ...userSafe } = user;
 
@@ -213,11 +234,11 @@ async function loginUser(req, res, next) {
 
     const user = await prisma.user.findUnique({
       where: { username },
-      include: { organisation: true },
+      include: { organisation: true, batch: true },
     });
 
     if (!user || user.status !== 'ACTIVE') {
-      const err = new Error('Invalid credentials');
+      const err = new Error('Invalid credentials or account is inactive.');
       err.statusCode = 401;
       throw err;
     }
@@ -235,16 +256,43 @@ async function loginUser(req, res, next) {
       throw err;
     }
 
+    // Require active college and active batch assignment for students
+    if (user.role === 'STUDENT') {
+      if (user.organisation && user.organisation.status === 'INACTIVE') {
+        const err = new Error('Access Denied: Your College / Organisation is currently inactive.');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (!user.batch_id) {
+        const err = new Error('Access Denied: You are not assigned to any batch. Please contact your college administrator to assign you to a batch.');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (user.batch && user.batch.status === 'INACTIVE') {
+        const err = new Error('Access Denied: Your assigned Batch is currently inactive. Please contact your administrator.');
+        err.statusCode = 403;
+        throw err;
+      }
+    }
+
     const token = jwt.sign(
       {
         user_id: user.user_id,
         username: user.username,
         role: user.role,
         org_id: user.org_id,
+        jti: crypto.randomUUID(),
       },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
+
+    const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
+    const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    await prisma.userSession.create({
+      data: { user_id: user.user_id, token, ip_address, user_agent, is_active: true }
+    }).catch(() => {});
 
     const { password_hash: _, ...userSafe } = user;
 
@@ -259,9 +307,18 @@ async function loginUser(req, res, next) {
 
 /**
  * POST /api/auth/logout
- * Stateless JWT – just return success.
  */
 async function logout(req, res) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      await prisma.userSession.updateMany({
+        where: { token },
+        data: { is_active: false },
+      }).catch(() => {});
+    }
+  } catch (_) {}
   res.json({ success: true, message: 'Logged out successfully' });
 }
 
@@ -272,7 +329,7 @@ async function me(req, res, next) {
   try {
     const user = await prisma.user.findUnique({
       where: { user_id: req.user.user_id },
-      include: { organisation: true },
+      include: { organisation: true, batch: true },
     });
 
     if (!user) {
@@ -346,4 +403,85 @@ async function getOrganisations(req, res, next) {
   }
 }
 
-module.exports = { registerAdmin, registerUser, loginAdmin, loginUser, logout, me, changePassword, getOrganisations };
+/**
+ * POST /api/auth/login
+ * Generic login for any valid user role.
+ */
+async function loginGeneric(req, res, next) {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      const err = new Error('username and password are required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { username },
+      include: { organisation: true, batch: true },
+    });
+
+    if (!user || user.status !== 'ACTIVE') {
+      const err = new Error('Invalid credentials or account is inactive.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      const err = new Error('Invalid credentials');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    // Require active college and active batch assignment for students
+    if (user.role === 'STUDENT') {
+      if (user.organisation && user.organisation.status === 'INACTIVE') {
+        const err = new Error('Access Denied: Your College / Organisation is currently inactive.');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (!user.batch_id) {
+        const err = new Error('Access Denied: You are not assigned to any batch. Please contact your college administrator to assign you to a batch.');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (user.batch && user.batch.status === 'INACTIVE') {
+        const err = new Error('Access Denied: Your assigned Batch is currently inactive. Please contact your administrator.');
+        err.statusCode = 403;
+        throw err;
+      }
+    }
+
+    const token = jwt.sign(
+      {
+        user_id: user.user_id,
+        username: user.username,
+        role: user.role,
+        org_id: user.org_id,
+        jti: crypto.randomUUID(),
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
+    const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    await prisma.userSession.create({
+      data: { user_id: user.user_id, token, ip_address, user_agent, is_active: true }
+    }).catch(() => {});
+
+    const { password_hash: _, ...userSafe } = user;
+
+    res.json({
+      success: true,
+      data: { token, user: userSafe },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { registerAdmin, registerUser, loginAdmin, loginUser, loginGeneric, logout, me, changePassword, getOrganisations };

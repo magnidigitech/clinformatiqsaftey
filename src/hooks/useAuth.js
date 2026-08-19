@@ -62,6 +62,32 @@ export function useAuth() {
   );
 
   /**
+   * Universal Login for any role.
+   */
+  const login = useCallback(
+    async (username, password, navigateTo = null) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await authService.login(username, password);
+        setAuth(data.user, data.token);
+        if (navigateTo) {
+          navigate(navigateTo);
+        }
+        return data;
+      } catch (err) {
+        const message =
+          err.response?.data?.message || 'Login failed. Please try again.';
+        setError(message);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [setAuth, navigate]
+  );
+
+  /**
    * Register Admin.
    */
   const registerAdmin = useCallback(
@@ -135,6 +161,7 @@ export function useAuth() {
     isAuthenticated,
     loading,
     error,
+    login,
     loginAdmin,
     loginUser,
     registerAdmin,
