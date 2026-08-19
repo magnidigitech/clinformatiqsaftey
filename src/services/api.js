@@ -25,20 +25,21 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor: handle 401 by clearing auth and redirecting
+// Response interceptor: handle 401 by clearing auth and immediately redirecting to login
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       const { logout } = useAuthStore.getState();
       logout();
-      // Redirect to login if not already there
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      const publicPaths = ['/login', '/register', '/admin-login', '/admin-register'];
+      if (!publicPaths.includes(window.location.pathname)) {
+        window.location.replace('/login');
       }
     }
     return Promise.reject(error);
   }
 );
+
 
 export default api;

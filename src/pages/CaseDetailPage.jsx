@@ -1169,7 +1169,7 @@ export default function CaseDetailPage() {
       try {
         await api.post(`/cases/${id}/lock`);
         alert("Case locked successfully. Other users can no longer see or edit this case.");
-        setCaseData(p => ({...p, locked_by: user.username}));
+        setCaseData(p => ({...p, locked_by: user?.username}));
         setManualLock(true);
       } catch (err) {
         console.error("Failed to lock case:", err);
@@ -1179,9 +1179,10 @@ export default function CaseDetailPage() {
 
     if (!isReadOnly && caseData && !caseData.locked_by && id) {
       api.post(`/cases/${id}/lock`).then(() => {
-        setCaseData(p => ({...p, locked_by: user.username}));
+        setCaseData(p => ({...p, locked_by: user?.username}));
       }).catch(err => console.error("Auto-lock failed", err));
     }
+
 
     window.addEventListener('save_case', handleSave);
     window.addEventListener('print_case', handlePrint);

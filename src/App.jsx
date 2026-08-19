@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import useAuth from './hooks/useAuth';
+import useAuthStore from './store/authStore';
+import api from './services/api';
 import AppShell from './components/layout/AppShell';
 
 // Pages
@@ -23,11 +25,12 @@ import UsersPage from './pages/UsersPage';
 function ProtectedRoute({ children, allowedRoles }) {
   const { isAuthenticated, user } = useAuth();
   
-  if (!isAuthenticated) return <Navigate to="/login" />;
-  if (allowedRoles && !allowedRoles.includes(user?.role)) return <Navigate to="/" />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (allowedRoles && !allowedRoles.includes(user?.role)) return <Navigate to="/" replace />;
   
   return children;
 }
+
 
 export default function App() {
   const { isAuthenticated } = useAuth();

@@ -53,7 +53,7 @@ export default function WorkflowPage() {
     if (contextMenu?.case) {
       const caseId = contextMenu.case.case_id || contextMenu.case.id;
       try {
-        await api.put(`/cases/${caseId}`, { assigned_to: user.username });
+        await api.put(`/cases/${caseId}`, { assigned_to: user?.username });
         
         addNotification({ type: 'success', message: `Case ${contextMenu.case.case_number} accepted successfully.` });
         setContextMenu(null);
