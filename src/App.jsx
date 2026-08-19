@@ -114,8 +114,9 @@ export default function App() {
       <Route path="/admin-login" element={<AdminLoginPage />} />
       <Route path="/admin-register" element={<AdminRegisterPage />} />
       
-      {/* Admin Only Route for User and Session Control */}
-      <Route path="/users" element={<ProtectedRoute allowedRoles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
+      {/* User and Session Control Portal (Has built-in Admin authentication) */}
+      <Route path="/users" element={<UsersPage />} />
+
       
       <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route path="/" element={<DashboardPage />} />

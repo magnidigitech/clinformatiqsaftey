@@ -32,10 +32,11 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       const { logout } = useAuthStore.getState();
       logout();
-      const publicPaths = ['/login', '/register', '/admin-login', '/admin-register'];
+      const publicPaths = ['/login', '/register', '/admin-login', '/admin-register', '/users'];
       if (!publicPaths.includes(window.location.pathname)) {
         window.location.replace('/login');
       }
+
     }
     return Promise.reject(error);
   }
