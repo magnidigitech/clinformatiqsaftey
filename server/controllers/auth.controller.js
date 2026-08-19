@@ -67,6 +67,13 @@ async function registerAdmin(req, res, next) {
 
     const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
     const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    // Single-device policy: Invalidate any previous active sessions
+    await prisma.userSession.updateMany({
+      where: { user_id: result.user.user_id, is_active: true },
+      data: { is_active: false }
+    }).catch(() => {});
+
     await prisma.userSession.create({
       data: { user_id: result.user.user_id, token, ip_address, user_agent, is_active: true }
     }).catch(() => {});
@@ -137,6 +144,13 @@ async function registerUser(req, res, next) {
 
     const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
     const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    // Single-device policy: Invalidate any previous active sessions
+    await prisma.userSession.updateMany({
+      where: { user_id: result.user.user_id, is_active: true },
+      data: { is_active: false }
+    }).catch(() => {});
+
     await prisma.userSession.create({
       data: { user_id: result.user.user_id, token, ip_address, user_agent, is_active: true }
     }).catch(() => {});
@@ -203,6 +217,12 @@ async function loginAdmin(req, res, next) {
 
     const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
     const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    // Single-device policy: Invalidate any previous active sessions
+    await prisma.userSession.updateMany({
+      where: { user_id: user.user_id, is_active: true },
+      data: { is_active: false }
+    }).catch(() => {});
 
     await prisma.userSession.create({
       data: { user_id: user.user_id, token, ip_address, user_agent, is_active: true }
@@ -289,6 +309,12 @@ async function loginUser(req, res, next) {
 
     const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
     const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    // Single-device policy: Invalidate any previous active sessions
+    await prisma.userSession.updateMany({
+      where: { user_id: user.user_id, is_active: true },
+      data: { is_active: false }
+    }).catch(() => {});
 
     await prisma.userSession.create({
       data: { user_id: user.user_id, token, ip_address, user_agent, is_active: true }
@@ -468,6 +494,12 @@ async function loginGeneric(req, res, next) {
 
     const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
     const user_agent = req.headers['user-agent'] || 'Unknown Device';
+
+    // Single-device policy: Invalidate any previous active sessions
+    await prisma.userSession.updateMany({
+      where: { user_id: user.user_id, is_active: true },
+      data: { is_active: false }
+    }).catch(() => {});
 
     await prisma.userSession.create({
       data: { user_id: user.user_id, token, ip_address, user_agent, is_active: true }

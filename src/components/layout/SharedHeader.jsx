@@ -273,7 +273,9 @@ export default function SharedHeader() {
                   <div className={cn(dropdownContainerClass, "w-60")}>
                     <button onClick={() => setPasswordModalOpen(true)} className={cn(dropdownItemClass, "w-[calc(100%-8px)] text-left")}><span>Change Password</span></button>
                     <button onClick={() => window.dispatchEvent(new CustomEvent('open_icd_browser'))} className={cn(dropdownItemClass, "w-[calc(100%-8px)] text-left")}><span>MedDRA Browser</span></button>
-                    <Link to="/users" className={cn(dropdownItemClass, "text-emerald-700 font-bold hover:bg-emerald-50")}><span>User & Session Control</span></Link>
+                    {user?.role === 'ADMIN' && (
+                      <Link to="/users" className={cn(dropdownItemClass, "text-emerald-700 font-bold hover:bg-emerald-50")}><span>User & Session Control</span></Link>
+                    )}
                     
                     <div className={cn(dropdownItemClass, "opacity-50 cursor-not-allowed")} title="Feature not available">
                       <span>Logs</span>

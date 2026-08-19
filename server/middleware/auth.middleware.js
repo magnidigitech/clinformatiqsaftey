@@ -48,16 +48,26 @@ const authenticate = async (req, res, next) => {
       }
     }
 
-    // Check if session has been revoked
+    // Check if session exists and is active
     const session = await prisma.userSession.findUnique({
       where: { token },
     });
 
-    if (session && !session.is_active) {
-      const error = new Error('Session has been revoked.');
+    if (!session || !session.is_active) {
+      const error = new Error('Session has been revoked or expired. Please sign in again.');
       error.statusCode = 401;
       throw error;
     }
+
+    // Refresh last active timestamp asynchronously
+    const now = new Date();
+    if (session.last_active && (now - new Date(session.last_active) > 30000)) {
+      prisma.userSession.update({
+        where: { session_id: session.session_id },
+        data: { last_active: now }
+      }).catch(() => {});
+    }
+
 
     // Attach fresh user payload to request
     req.user = {

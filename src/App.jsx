@@ -30,6 +30,38 @@ function ProtectedRoute({ children, allowedRoles }) {
 }
 
 export default function App() {
+  const { isAuthenticated } = useAuth();
+
+  // Heartbeat to immediately detect revoked session or single-device login termination
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const checkSessionStatus = async () => {
+      try {
+        await api.get('/auth/me');
+      } catch (err) {
+        // 401 is handled automatically by api response interceptor (logout + redirect)
+      }
+    };
+
+    // Initial check on mount / tab focus
+    const handleFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkSessionStatus();
+      }
+    };
+
+    const intervalId = setInterval(checkSessionStatus, 10000); // Check every 10 seconds
+    document.addEventListener('visibilitychange', handleFocus);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleFocus);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isAuthenticated]);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Tab') {
@@ -78,7 +110,9 @@ export default function App() {
       <Route path="/register" element={<UserRegisterPage />} />
       <Route path="/admin-login" element={<AdminLoginPage />} />
       <Route path="/admin-register" element={<AdminRegisterPage />} />
-      <Route path="/users" element={<UsersPage />} />
+      
+      {/* Admin Only Route for User and Session Control */}
+      <Route path="/users" element={<ProtectedRoute allowedRoles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
       
       <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route path="/" element={<DashboardPage />} />
