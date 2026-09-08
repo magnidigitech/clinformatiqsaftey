@@ -86,6 +86,7 @@ async function create(req, res, next) {
       receipt_date, 
       aware_date, 
       case_type, 
+      case_country,
       serious_flag,
       patient,
       reporter,
@@ -103,10 +104,13 @@ async function create(req, res, next) {
           student_id: user.user_id,
           org_id: user.org_id,
           workflow_state: 'DRAFT',
+          case_country: case_country || (reporter ? reporter.country : null) || null,
           receipt_date: receipt_date ? new Date(receipt_date) : null,
           aware_date: aware_date ? new Date(aware_date) : null,
           case_type: case_type || null,
           serious_flag: serious_flag || 'N',
+          case_narrative: req.body.case_narrative || null,
+          analysis_data: req.body.analysis_data ? (typeof req.body.analysis_data === 'object' ? JSON.stringify(req.body.analysis_data) : String(req.body.analysis_data)) : null,
         },
       });
 
@@ -132,7 +136,9 @@ async function create(req, res, next) {
             age_value: patient.age ? parseInt(patient.age, 10) : null,
             age_unit: patient.ageUnits || null,
             sex: patient.gender || null,
-            patient_code: patient.initials || null,
+            patient_code: patient.initials || [patient.firstName, patient.lastName].filter(Boolean).join(' ') || null,
+            first_name: patient.firstName || null,
+            last_name: patient.lastName || null,
           }
         });
       }
@@ -148,13 +154,17 @@ async function create(req, res, next) {
       }
 
       // 5. Create Reporter (if provided)
-      if (reporter && (reporter.firstName || reporter.lastName)) {
+      if (reporter && (reporter.firstName || reporter.lastName || reporter.country)) {
         await tx.reporter.create({
           data: {
             case_id: caseId,
+            salutation: reporter.sal || reporter.salutation || null,
             first_name: reporter.firstName || null,
             last_name: reporter.lastName || null,
+            suffix: reporter.suffix || null,
             country: reporter.country || null,
+            state: reporter.state || null,
+            postal_code: reporter.postalCode || reporter.postal_code || null,
             reporter_type: reporter.reporterType || null,
           }
         });
@@ -194,6 +204,7 @@ async function getById(req, res, next) {
           include: { causalities: true },
         },
         reporters: true,
+        action_items: true,
 
         workflow_logs: {
           orderBy: { action_time: 'asc' },
@@ -219,7 +230,12 @@ async function getById(req, res, next) {
       throw err;
     }
 
-    res.json({ success: true, data: caseData });
+    const caseResult = {
+      ...caseData,
+      case_country: caseData.case_country || caseData.reporters?.[0]?.country || null,
+    };
+
+    res.json({ success: true, data: caseResult });
   } catch (err) {
     next(err);
   }
@@ -263,7 +279,7 @@ async function update(req, res, next) {
     assertEditable(caseRecord, req.user);
 
     // Only the case owner (student) can update
-    const { receipt_date, aware_date, case_type, serious_flag, workflow_state, assigned_to } = req.body;
+    const { receipt_date, aware_date, case_type, case_country, serious_flag, workflow_state, assigned_to, case_narrative, analysis_data, patient_history_data, lab_data } = req.body;
 
     // Only the case owner (student) or current assignee can update unless it's a routing update
     if (req.user.role === 'STUDENT' && caseRecord.student_id !== req.user.user_id && caseRecord.assigned_to !== req.user.user_id && !workflow_state && !assigned_to) {
@@ -301,13 +317,25 @@ async function update(req, res, next) {
       }
     }
 
+    const serializeVal = (val) => {
+      if (val === undefined) return undefined;
+      if (val === null) return null;
+      if (typeof val === 'object') return JSON.stringify(val);
+      return String(val);
+    };
+
     const updatedCase = await prisma.sptOrgCase.update({
       where: { case_id: caseId },
       data: {
         receipt_date: parsedReceiptDate,
         aware_date: parsedAwareDate,
         case_type: case_type !== undefined ? case_type : undefined,
+        case_country: case_country !== undefined ? case_country : undefined,
         serious_flag: serious_flag !== undefined ? serious_flag : undefined,
+        case_narrative: case_narrative !== undefined ? case_narrative : undefined,
+        analysis_data: analysis_data !== undefined ? (typeof analysis_data === 'object' ? JSON.stringify(analysis_data) : String(analysis_data)) : undefined,
+        patient_history_data: serializeVal(patient_history_data),
+        lab_data: serializeVal(lab_data),
         workflow_state: workflow_state !== undefined ? workflow_state : undefined,
         assigned_to: updatedStudentId !== undefined ? updatedStudentId : undefined,
       },

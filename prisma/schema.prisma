@@ -85,10 +85,15 @@ model SptOrgCase {
   student_id     Int
   org_id         Int
   workflow_state String    @default("DRAFT")
+  case_country   String?
   receipt_date   DateTime?
   aware_date     DateTime?
   case_type      String?
   serious_flag   String    @default("N")
+  case_narrative String?
+  analysis_data        String?
+  patient_history_data String?
+  lab_data             String?
   locked_by      String?
   lock_time      DateTime?
   assigned_to    Int?
@@ -112,18 +117,22 @@ model SptOrgCase {
 
 // ─── PATIENT DATA (spt_org_cad) ────────────────────────────────────
 model SptOrgCad {
-  patient_id      Int       @id @default(autoincrement())
-  case_id         Int       @unique
-  patient_code    String?
-  dob             DateTime?
-  age_value       Int?
-  age_unit        String?
-  sex             String?
-  weight_kg       Int?
-  height_cm       Int?
-  ethnicity       String?
-  medical_history String?
-  concomitant_meds String?
+  patient_id           Int       @id @default(autoincrement())
+  case_id              Int       @unique
+  patient_code         String?
+  first_name           String?
+  last_name            String?
+  dob                  DateTime?
+  age_value            Int?
+  age_unit             String?
+  sex                  String?
+  weight_kg            Int?
+  height_cm            Int?
+  ethnicity            String?
+  medical_history      String?
+  concomitant_meds     String?
+  patient_history_data String?
+  lab_data             String?
 
   case SptOrgCase @relation(fields: [case_id], references: [case_id])
 
@@ -218,12 +227,20 @@ model Reporter {
   reporter_id   Int     @id @default(autoincrement())
   case_id       Int
   reporter_type String?
+  salutation    String?
   first_name    String?
+  middle_name   String?
   last_name     String?
+  suffix        String?
   qualification String?
   country       String?
   institution   String?
   email         String?
+  phone         String?
+  city          String?
+  state         String?
+  postal_code   String?
+  intermediary  String?
 
   case SptOrgCase @relation(fields: [case_id], references: [case_id])
 

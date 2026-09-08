@@ -166,7 +166,7 @@ export default function DrugAutocomplete({
     <div className={cn('relative', className)}>
       {/* Input */}
       <div className="relative flex items-center">
-        <Search className="absolute left-2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+        <Search className="absolute left-3 w-4 h-4 text-slate-400 pointer-events-none z-10" />
         <input
           ref={inputRef}
           type="text"
@@ -176,24 +176,26 @@ export default function DrugAutocomplete({
           onFocus={() => query.trim().length >= 2 && search(query)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder={placeholder}
+          style={{ paddingLeft: '2.35rem', paddingRight: '2.25rem' }}
           className={cn(
-            'pl-7 pr-7 h-7 w-full border border-slate-200 rounded text-xs bg-white',
+            'h-10 w-full border border-slate-200 rounded text-sm bg-white',
             'focus:outline-none focus:ring-2 focus:ring-emerald-400/30 focus:border-emerald-400',
             'transition-all duration-150',
-            inputClass
+            inputClass,
+            '!pl-10 !pr-9'
           )}
         />
         {query && (
           <button
             type="button"
             onClick={clear}
-            className="absolute right-1.5 text-slate-400 hover:text-slate-600 transition-colors"
+            className="absolute right-3 text-slate-400 hover:text-slate-600 transition-colors z-10"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         )}
         {!dbLoaded && (
-          <Loader2 className="absolute right-1.5 w-3.5 h-3.5 text-slate-400 animate-spin" />
+          <Loader2 className="absolute right-3 w-4 h-4 text-slate-400 animate-spin z-10" />
         )}
       </div>
 

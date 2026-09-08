@@ -6,6 +6,8 @@ import { cn } from '../lib/utils';
 import { AlertCircle, FileText, Check, Unlock, Search, X } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import DrugAutocomplete from '../components/ui/DrugAutocomplete';
+import SearchableDropdown from '../components/ui/SearchableDropdown';
+import { COUNTRIES, getCountryName } from '../constants/countries';
 
 /* ── section wrapper ── */
 const Section = ({ title, children, extra }) => (
@@ -31,9 +33,9 @@ export default function NewCasePage() {
     productName: '', genericName: '',
     descriptionAsReported: '',
     onsetDateTime: '',
-    sal: '', repFirstName: '', repMiddleName: '', repLastName: '',
-    repSuffix: '', repCountry: '', repState: '', repPostalCode: '', repIntermediary: '',
-    patNameOrInitials: '', patId: '', patDOB: '',
+    sal: '', repFirstName: '', repLastName: '',
+    repSuffix: '', repCountry: '', repState: '', repPostalCode: '',
+    patFirstName: '', patLastName: '', patNameOrInitials: '', patId: '', patDOB: '',
     patAge: '', patUnits: '', patGender: '',
     litId: '', litKeywords: '', litJournal: '', litTitle: '',
     fullSearch: false,
@@ -56,6 +58,23 @@ export default function NewCasePage() {
   const [showJustificationDialog, setShowJustificationDialog] = useState(false);
   const [justificationDraft, setJustificationDraft] = useState('');
   const [standardJustification, setStandardJustification] = useState('Not specified');
+
+  const countryOptions = React.useMemo(() => {
+    return COUNTRIES.map(c => ({
+      value: c.code,
+      label: c.name,
+      sublabel: c.code
+    }));
+  }, []);
+
+  const reportTypeOptions = React.useMemo(() => [
+    { value: 'Spontaneous', label: 'Spontaneous' },
+    { value: 'Clinical Trial / Study', label: 'Clinical Trial / Study' },
+    { value: 'Solicited', label: 'Solicited' },
+    { value: 'Literature', label: 'Literature' },
+    { value: 'Regulatory Authority', label: 'Regulatory Authority' },
+    { value: 'Other', label: 'Other' },
+  ], []);
 
   // Attachments state
   const fileInputRef = useRef(null);
@@ -102,8 +121,17 @@ export default function NewCasePage() {
     }
     const results = cases.filter(c => {
       let match = false;
-      if (form.caseCountry && c.case_country === form.caseCountry) match = true;
-      if (form.caseReportType && c.case_type === form.caseReportType) match = true;
+      if (form.caseCountry) {
+        const selCode = form.caseCountry.toLowerCase();
+        const selName = (getCountryName(form.caseCountry) || '').toLowerCase();
+        const caseCountryVal = (c.case_country || c.reporters?.[0]?.country || '').toLowerCase();
+        if (caseCountryVal === selCode || caseCountryVal === selName) match = true;
+      }
+      if (form.caseReportType) {
+        const selType = form.caseReportType.toLowerCase();
+        const caseType = (c.case_type || '').toLowerCase();
+        if (caseType === selType || (selType.includes('study') && caseType.includes('study'))) match = true;
+      }
       if (form.productName && c.products?.some(p => p.drug_name.toLowerCase().includes(form.productName.toLowerCase()))) match = true;
       return match;
     });
@@ -112,7 +140,14 @@ export default function NewCasePage() {
   };
 
   const validateForm = () => {
-    if (!form.caseReceiptDate || !form.caseCountry || !form.caseReportType || !form.productName || !form.patNameOrInitials || !form.descriptionAsReported) {
+    if (
+      !form.caseReceiptDate || 
+      !form.caseCountry || 
+      !form.caseReportType || 
+      !form.productName || 
+      (!form.patFirstName && !form.patLastName && !form.patNameOrInitials) || 
+      !form.descriptionAsReported
+    ) {
       alert("Please fill in all mandatory fields before proceeding.");
       return false;
     }
@@ -131,19 +166,26 @@ export default function NewCasePage() {
       receipt_date: form.caseReceiptDate,
       aware_date: form.safetyReceiptDate || null,
       case_type: form.caseReportType,
+      case_country: form.caseCountry ? (getCountryName(form.caseCountry) || form.caseCountry) : null,
       serious_flag: (form.seriousDeath || form.seriousHospitalized || form.seriousLifeThreatening) ? 'Y' : 'N',
       initial_justification: form.initialJustification,
       patient: {
-        initials: form.patNameOrInitials,
+        initials: [form.patFirstName, form.patLastName].filter(Boolean).join(' ') || form.patNameOrInitials || 'UNKNOWN',
+        firstName: form.patFirstName || '',
+        lastName: form.patLastName || '',
         dob: form.patDOB || null,
         age: form.patAge,
         ageUnits: form.patUnits,
         gender: form.patGender,
       },
       reporter: {
+        sal: form.sal || null,
         firstName: form.repFirstName,
         lastName: form.repLastName,
-        country: form.repCountry,
+        suffix: form.repSuffix || null,
+        country: form.repCountry || getCountryName(form.caseCountry) || form.caseCountry,
+        state: form.repState || null,
+        postalCode: form.repPostalCode || null,
       },
       product: {
         productName: form.productName,
@@ -233,18 +275,23 @@ export default function NewCasePage() {
                 </div>
                 <div>
                   <label className={rlbl}>{arrow}Case Country</label>
-                  <select className={selReq} value={form.caseCountry} onChange={h('caseCountry')}>
-                    <option value=""></option><option value="US">UNITED STATES</option><option value="GB">UNITED KINGDOM</option>
-                    <option value="IN">INDIA</option><option value="DE">GERMANY</option>
-                    <option value="FR">FRANCE</option><option value="JP">JAPAN</option>
-                  </select>
+                  <SearchableDropdown
+                    value={form.caseCountry}
+                    onChange={(val) => setForm(p => ({ ...p, caseCountry: val }))}
+                    options={countryOptions}
+                    placeholder="Search or select country…"
+                    inputClass={selReq}
+                  />
                 </div>
                 <div>
                   <label className={rlbl}>{arrow}Case Report Type</label>
-                  <select className={selReq} value={form.caseReportType} onChange={h('caseReportType')}>
-                    <option value=""></option><option value="Spontaneous">Spontaneous</option><option value="Study">Study</option>
-                    <option value="Literature">Literature</option><option value="Other">Other</option>
-                  </select>
+                  <SearchableDropdown
+                    value={form.caseReportType}
+                    onChange={(val) => setForm(p => ({ ...p, caseReportType: val }))}
+                    options={reportTypeOptions}
+                    placeholder="Search or select report type…"
+                    inputClass={selReq}
+                  />
                 </div>
               </div>
               
@@ -296,7 +343,7 @@ export default function NewCasePage() {
                         }));
                       }}
                       placeholder="Search drug / brand name…"
-                      inputClass={inpReq}
+                      inputClass={cn(inpReq, "!pl-10 !pr-9")}
                     />
                   </div>
                   <Button variant="outline" className="h-10 rounded-sm">Select</Button>
@@ -327,30 +374,62 @@ export default function NewCasePage() {
 
             {/* ══════ REPORTER ══════ */}
             <Section title="Reporter" extra={<Button variant="outline" size="sm" className="rounded-sm">Select</Button>}>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
-                <div><label className={lbl}>Sal.</label><input className={inp} value={form.sal} onChange={h('sal')} /></div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                <div>
+                  <label className={lbl}>Sal.</label>
+                  <select className={sel} value={form.sal} onChange={h('sal')}>
+                    <option value=""></option>
+                    <option value="Mr.">Mr.</option>
+                    <option value="Ms.">Ms.</option>
+                    <option value="Dr.">Dr.</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
                 <div><label className={lbl}>First Name</label><input className={inp} value={form.repFirstName} onChange={h('repFirstName')} /></div>
-                <div><label className={lbl}>Middle Name</label><input className={inp} value={form.repMiddleName} onChange={h('repMiddleName')} /></div>
                 <div><label className={lbl}>Last Name</label><input className={inp} value={form.repLastName} onChange={h('repLastName')} /></div>
-                <div><label className={lbl}>Suffix</label><input className={inp} value={form.repSuffix} onChange={h('repSuffix')} /></div>
+                <div>
+                  <label className={lbl}>Suffix</label>
+                  <select className={sel} value={form.repSuffix} onChange={h('repSuffix')}>
+                    <option value=""></option>
+                    <option value="M.D. (Medical Doctor)">M.D. (Medical Doctor)</option>
+                    <option value="Ph.D. (Doctor of Philosophy)">Ph.D. (Doctor of Philosophy)</option>
+                    <option value="Pharm.D. (Doctor of Pharmacy)">Pharm.D. (Doctor of Pharmacy)</option>
+                    <option value="R.N. (Registered Nurse)">R.N. (Registered Nurse)</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div><label className={lbl}>Country</label><input className={inp} value={form.repCountry} onChange={h('repCountry')} /></div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className={lbl}>Country</label>
+                  <SearchableDropdown
+                    value={form.repCountry}
+                    onChange={(val, opt) => setForm(p => ({ ...p, repCountry: opt ? opt.label : val }))}
+                    options={countryOptions}
+                    placeholder="Search country…"
+                    inputClass={inp}
+                  />
+                </div>
                 <div><label className={lbl}>State/Province</label><input className={inp} value={form.repState} onChange={h('repState')} /></div>
                 <div><label className={lbl}>Postal Code</label><input className={inp} value={form.repPostalCode} onChange={h('repPostalCode')} /></div>
-                <div><label className={lbl}>Intermediary</label><input className={inp} value={form.repIntermediary} onChange={h('repIntermediary')} /></div>
               </div>
             </Section>
 
             {/* ══════ PATIENT ══════ */}
             <Section title="Patient">
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
-                <div className="md:col-span-2">
-                  <label className={rlbl}>{arrow}First/Last Name or Initials</label>
-                  <input className={inpReq} value={form.patNameOrInitials} onChange={h('patNameOrInitials')} />
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                <div>
+                  <label className={rlbl}>{arrow}First Name</label>
+                  <input className={inpReq} value={form.patFirstName} onChange={h('patFirstName')} />
+                </div>
+                <div>
+                  <label className={rlbl}>{arrow}Last Name</label>
+                  <input className={inpReq} value={form.patLastName} onChange={h('patLastName')} />
                 </div>
                 <div><label className={lbl}>Pat. ID</label><input className={inp} value={form.patId} onChange={h('patId')} /></div>
                 <div><label className={lbl}>Date of Birth</label><input type="date" className={inp} value={form.patDOB} onChange={h('patDOB')} /></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div><label className={lbl}>Age</label><input type="number" className={inp} value={form.patAge} onChange={h('patAge')} /></div>
                 <div><label className={lbl}>Units</label><input className={inp} value={form.patUnits} onChange={h('patUnits')} /></div>
                 <div>
@@ -582,7 +661,7 @@ export default function NewCasePage() {
                           </td>
                           <td className="px-4 py-3 border-r border-slate-100 align-top">
                             <span className="font-bold text-slate-800">{rDate}</span>
-                            <div className="text-slate-600 mt-1">{c.case_country || rep?.country || 'UNKNOWN'}</div>
+                            <div className="text-slate-600 mt-1">{getCountryName(c.case_country || rep?.country) || c.case_country || rep?.country || 'UNKNOWN'}</div>
                           </td>
                           <td className="px-4 py-3 border-r border-slate-100 align-top">
                             <span className="font-bold text-slate-800">{c.products?.map(p => p.drug_name).join(', ') || '-'}</span>

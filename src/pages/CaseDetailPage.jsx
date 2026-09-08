@@ -8,6 +8,7 @@ import IcdBrowserModal from '../components/IcdBrowserModal';
 import { stripHtml } from '../utils/icdApi';
 import { generateCiomsPdf, generateAdrPdf } from '../lib/pdf-generator';
 import { getDueDate, getDueStatus, formatDueDate, getDueBadgeClasses, getDueLabel } from '../utils/dueDateUtils';
+import { COUNTRIES } from '../constants/countries';
 
 const HUMAN_READABLE_TABLES = {
   'spt_org_cases': 'Case General',
@@ -25,26 +26,26 @@ function toHumanReadableField(key) {
 
 function calculateDifferences(auditLogs) {
   const rows = [];
-  
+
   auditLogs.forEach((log, index) => {
     const parentTable = HUMAN_READABLE_TABLES[log.table_name] || log.table_name;
     const revNumber = auditLogs.length - index;
     const userName = log.user ? `${log.user.full_name} (${log.user.username})` : 'System';
-    
+
     let oldObj = {};
     let newObj = {};
-    try { if (log.old_value) oldObj = JSON.parse(log.old_value); } catch(e) {}
-    try { if (log.new_value) newObj = JSON.parse(log.new_value); } catch(e) {}
-    
+    try { if (log.old_value) oldObj = JSON.parse(log.old_value); } catch (e) { }
+    try { if (log.new_value) newObj = JSON.parse(log.new_value); } catch (e) { }
+
     const allKeys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)]);
     let changesFound = false;
-    
+
     allKeys.forEach(key => {
       if (key === 'updated_at' || key === 'created_at' || key === 'lock_time' || key === 'locked_by' || key.endsWith('_id')) return;
-      
+
       const oldVal = oldObj[key] !== undefined && oldObj[key] !== null ? String(oldObj[key]) : '';
       const newVal = newObj[key] !== undefined && newObj[key] !== null ? String(newObj[key]) : '';
-      
+
       if (oldVal !== newVal) {
         changesFound = true;
         rows.push({
@@ -60,14 +61,58 @@ function calculateDifferences(auditLogs) {
     });
 
     if (!changesFound && log.action === 'CREATE') {
-       rows.push({ parent: parentTable, field: 'Record Created', oldValue: '', newValue: 'NEW', rev: revNumber, user: userName, time: new Date(log.changed_at).toLocaleString() });
+      rows.push({ parent: parentTable, field: 'Record Created', oldValue: '', newValue: 'NEW', rev: revNumber, user: userName, time: new Date(log.changed_at).toLocaleString() });
     } else if (!changesFound && log.action === 'DELETE') {
-       rows.push({ parent: parentTable, field: 'Record Deleted', oldValue: 'EXISTING', newValue: 'DELETED', rev: revNumber, user: userName, time: new Date(log.changed_at).toLocaleString() });
+      rows.push({ parent: parentTable, field: 'Record Deleted', oldValue: 'EXISTING', newValue: 'DELETED', rev: revNumber, user: userName, time: new Date(log.changed_at).toLocaleString() });
     }
   });
-  
+
   return rows;
 }
+
+const formatDateForInput = (val) => {
+  if (!val || val === '00-MMM-0000' || val === '00-MMM') return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  return '';
+};
+
+const calculateAgeGroup = (ageVal, ageUnit = 'Years') => {
+  if (ageVal === '' || ageVal === null || ageVal === undefined) return '';
+  const num = parseFloat(ageVal);
+  if (isNaN(num) || num < 0) return '';
+
+  const unit = (ageUnit || 'Years').trim().toLowerCase();
+
+  // Neonate - Upto 1 Month
+  if (unit.startsWith('day') && num <= 30) return 'Neonate';
+  if (unit.startsWith('month') && num <= 1) return 'Neonate';
+  if (unit.startsWith('year') && num <= (1 / 12)) return 'Neonate';
+
+  // Infant - 1 Month - 2 Years
+  if (unit.startsWith('day') && num <= 730) return 'Infant';
+  if (unit.startsWith('month') && num <= 24) return 'Infant';
+  if (unit.startsWith('year') && num < 2) return 'Infant';
+
+  // Child - 2 to 12 Years
+  if (unit.startsWith('day') && num <= 4383) return 'Child';
+  if (unit.startsWith('month') && num <= 144) return 'Child';
+  if (unit.startsWith('year') && num <= 12) return 'Child';
+
+  // Adolescent - 13- 18 Years
+  if (unit.startsWith('day') && num <= 6574) return 'Adolescent';
+  if (unit.startsWith('month') && num <= 216) return 'Adolescent';
+  if (unit.startsWith('year') && num <= 18) return 'Adolescent';
+
+  // Adults - 19 to 65 Years
+  if (unit.startsWith('day') && num <= 23741) return 'Adults';
+  if (unit.startsWith('month') && num <= 780) return 'Adults';
+  if (unit.startsWith('year') && num <= 65) return 'Adults';
+
+  // Geriatric - Above 65 Years
+  return 'Geriatric';
+};
 
 export default function CaseDetailPage() {
   const { id } = useParams();
@@ -84,9 +129,9 @@ export default function CaseDetailPage() {
   const [activeTab, setActiveTab] = useState('Patient');
   const [activeSubTab, setActiveSubTab] = useState('Patient');
   const [productTabs, setProductTabs] = useState([
-    { 
-      id: 1, 
-      name: '', 
+    {
+      id: 1,
+      name: '',
       isDR: false,
       genericName: '',
       obtainCountry: '',
@@ -94,17 +139,17 @@ export default function CaseDetailPage() {
       authCountry: '',
       role: 'Suspect',
       datasheets: [
-        { 
-          name: 'Core Data Sheet', 
-          licenses: [{ name: 'Global' }] 
+        {
+          name: 'Core Data Sheet',
+          licenses: [{ name: 'Global' }]
         },
-        { 
-          name: 'USPI', 
-          licenses: [{ name: 'US (Inv: 48,811)' }] 
+        {
+          name: 'USPI',
+          licenses: [{ name: 'US (Inv: 48,811)' }]
         },
-        { 
-          name: 'SmPC', 
-          licenses: [{ name: 'EU (Inv: )' }] 
+        {
+          name: 'SmPC',
+          licenses: [{ name: 'EU (Inv: )' }]
         }
       ]
     }
@@ -143,9 +188,9 @@ export default function CaseDetailPage() {
   };
 
   const [eventTabs, setEventTabs] = useState([
-    { 
-      id: 1, 
-      name: '', 
+    {
+      id: 1,
+      name: '',
       descriptionReported: '',
       descriptionCoded: '',
       chapter: '',
@@ -346,7 +391,8 @@ export default function CaseDetailPage() {
   const [selectedContactId, setSelectedContactId] = useState(null);
 
   const handleAddContact = () => {
-    const newContact = { id: Date.now(), date: '00-MMM-0000', dateSent: '00-MMM-0000', code: '', description: '', group: '', user: '' };
+    const today = new Date().toISOString().split('T')[0];
+    const newContact = { id: Date.now(), date: today, dateSent: today, code: '', description: '', group: '', user: '' };
     setContacts(prev => [...prev, newContact]);
     setSelectedContactId(newContact.id);
   };
@@ -367,7 +413,8 @@ export default function CaseDetailPage() {
   const [selectedActionItemId, setSelectedActionItemId] = useState(null);
 
   const handleAddActionItem = () => {
-    const newItem = { id: Date.now(), dateOpen: '00-MMM-0000', dateDue: '00-MMM-0000', dateCompleted: '00-MMM-0000', code: '', description: '', group: '', user: '' };
+    const today = new Date().toISOString().split('T')[0];
+    const newItem = { id: Date.now(), dateOpen: today, dateDue: today, dateCompleted: '', code: '', description: '', group: '', user: '' };
     setActionItems(prev => [...prev, newItem]);
     setSelectedActionItemId(newItem.id);
   };
@@ -383,6 +430,22 @@ export default function CaseDetailPage() {
     setActionItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i));
   };
 
+  // Routing Comments
+  const [routingComments, setRoutingComments] = useState([
+    { id: 1, date: new Date().toISOString().split('T')[0], user: '', comment: '' },
+    { id: 2, date: new Date().toISOString().split('T')[0], user: '', comment: '' },
+  ]);
+
+  const updateRoutingComment = (id, field, value) => {
+    setRoutingComments(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
+  };
+
+  const handleAddRoutingComment = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const newComment = { id: Date.now(), date: today, user: user?.username || '', comment: '' };
+    setRoutingComments(prev => [newComment, ...prev]);
+  };
+
   // Modal states
   const [isWhoDrugModalOpen, setIsWhoDrugModalOpen] = useState(false);
   const [isCompanyProductModalOpen, setIsCompanyProductModalOpen] = useState(false);
@@ -393,7 +456,7 @@ export default function CaseDetailPage() {
   const [showCaseDetailsModal, setShowCaseDetailsModal] = useState(false);
   const [revisions, setRevisions] = useState([]);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
-  
+
   const uniqueRevs = Array.from(new Set(revisions.map(r => r.rev))).map(revNum => revisions.find(r => r.rev === revNum));
 
   const [hasValidationWarning, setHasValidationWarning] = useState(false);
@@ -401,11 +464,11 @@ export default function CaseDetailPage() {
   const [validationErrors, setValidationErrors] = useState([]);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
   const [showRoutePrompt, setShowRoutePrompt] = useState(false);
-  
+
   const [orgUsers, setOrgUsers] = useState([]);
   const [selectedAssignee, setSelectedAssignee] = useState('');
   const [routeComments, setRouteComments] = useState('');
-  
+
   // Save modal state
   const [isSaving, setIsSaving] = useState(false);
   const [manualLock, setManualLock] = useState(false);
@@ -419,6 +482,22 @@ export default function CaseDetailPage() {
     initialJustification: '',
     caseClassifications: [],
     followUps: [],
+    // Analysis & Summary
+    caseNarrative: '',
+    caseComment: '',
+    localEvaluator: '',
+    localEvaluatorComment: '',
+    companyComment: '',
+    evaluationSimilarEvents: '',
+    caseSeriousSummary: '',
+    caseSeriousNotes: '',
+    companyAgentCausal: '',
+    companyAgentCausalNotes: '',
+    listednessDetermination: '',
+    listednessDeterminationNotes: '',
+    caseOutcome: '',
+    caseOutcomeNotes: '',
+    companyDiagnosisNotes: '',
     // Study
     projectId: '',
     studyId: '',
@@ -449,18 +528,18 @@ export default function CaseDetailPage() {
     patPhone: '',
     patProtectConfidentiality: false,
     childOnlyCase: false,
-    
+
     patDob: '',
     patAge: '',
-    patAgeUnits: '',
+    patAgeUnits: 'Years',
     patAgeGroup: '',
     patEthnicity: '',
     patOccupation: '',
     patWeight: '',
-    patWeightUnits: '',
+    patWeightUnits: 'kg',
     patHeight: '',
-    patHeightUnits: '',
-    patGender: '',
+    patHeightUnits: 'cm',
+    patGender: 'Male',
     patPregnant: '',
     patDateOfLmp: '',
     patBreastfeeding: false,
@@ -476,7 +555,7 @@ export default function CaseDetailPage() {
     parentHeight: '',
     parentBreastfeeding: false,
     parentMedicalHistory: '',
-    
+
     dueDate: '',
     weeksAtOnset: '',
     weeksAtExposure: '',
@@ -495,6 +574,11 @@ export default function CaseDetailPage() {
     deliveryNotes: '',
     birthType: '',
     fetalOutcome: '',
+    // Case Lock / Archive
+    caseLockStatus: 'Unlocked',
+    closureDate: '',
+    lockedOrClosedBy: '',
+    caseLockNotes: '',
   });
 
   useEffect(() => {
@@ -502,7 +586,16 @@ export default function CaseDetailPage() {
     api.get(`/cases/${id}`).then(res => {
       const data = res.data?.data || res.data;
       setCaseData(data);
-      
+
+      let parsedAnalysis = {};
+      if (data.analysis_data) {
+        try {
+          parsedAnalysis = typeof data.analysis_data === 'string' ? JSON.parse(data.analysis_data) : data.analysis_data;
+        } catch (e) {
+          console.error("Failed to parse analysis_data", e);
+        }
+      }
+
       // Hydrate core form fields
       setForm(prev => {
         const p = data.patient || {};
@@ -510,29 +603,53 @@ export default function CaseDetailPage() {
           ...prev,
           caseReceiptDate: data.receipt_date ? new Date(data.receipt_date).toISOString().split('T')[0] : prev.caseReceiptDate,
           safetyReceiptDate: data.aware_date ? new Date(data.aware_date).toISOString().split('T')[0] : prev.safetyReceiptDate,
-          caseCountry: data.case_country || prev.caseCountry,
+          caseCountry: data.case_country || data.reporters?.[0]?.country || prev.caseCountry,
           caseReportType: data.case_type || prev.caseReportType,
           caseSerious: data.serious_flag === 'Y' ? 'Yes' : 'No',
+          // Analysis & Summary fields
+          caseNarrative: data.case_narrative || parsedAnalysis.caseNarrative || prev.caseNarrative || '',
+          caseComment: parsedAnalysis.caseComment || prev.caseComment || '',
+          localEvaluator: parsedAnalysis.localEvaluator || prev.localEvaluator || '',
+          localEvaluatorComment: parsedAnalysis.localEvaluatorComment || prev.localEvaluatorComment || '',
+          companyComment: parsedAnalysis.companyComment || prev.companyComment || '',
+          evaluationSimilarEvents: parsedAnalysis.evaluationSimilarEvents || prev.evaluationSimilarEvents || '',
+          caseSeriousSummary: parsedAnalysis.caseSeriousSummary || (data.serious_flag === 'Y' ? 'Yes' : (data.serious_flag === 'N' ? 'No' : '')) || prev.caseSeriousSummary || '',
+          caseSeriousNotes: parsedAnalysis.caseSeriousNotes || prev.caseSeriousNotes || '',
+          companyAgentCausal: parsedAnalysis.companyAgentCausal || prev.companyAgentCausal || '',
+          companyAgentCausalNotes: parsedAnalysis.companyAgentCausalNotes || prev.companyAgentCausalNotes || '',
+          listednessDetermination: parsedAnalysis.listednessDetermination || prev.listednessDetermination || '',
+          listednessDeterminationNotes: parsedAnalysis.listednessDeterminationNotes || prev.listednessDeterminationNotes || '',
+          caseOutcome: parsedAnalysis.caseOutcome || prev.caseOutcome || '',
+          caseOutcomeNotes: parsedAnalysis.caseOutcomeNotes || prev.caseOutcomeNotes || '',
+          companyDiagnosisNotes: parsedAnalysis.companyDiagnosisNotes || prev.companyDiagnosisNotes || '',
+          // Case Lock / Archive
+          caseLockStatus: parsedAnalysis.caseLockStatus || (data.locked_by ? 'Locked' : 'Unlocked') || prev.caseLockStatus || 'Unlocked',
+          closureDate: parsedAnalysis.closureDate || (data.closure_date ? new Date(data.closure_date).toISOString().split('T')[0] : '') || prev.closureDate || '',
+          lockedOrClosedBy: parsedAnalysis.lockedOrClosedBy || data.locked_by || prev.lockedOrClosedBy || '',
+          caseLockNotes: parsedAnalysis.caseLockNotes || prev.caseLockNotes || '',
           // Patient
+          patFirstName: p.first_name || (p.patient_code ? p.patient_code.split(' ')[0] : '') || prev.patFirstName,
+          patLastName: p.last_name || (p.patient_code && p.patient_code.includes(' ') ? p.patient_code.split(' ').slice(1).join(' ') : '') || prev.patLastName,
           patInitials: p.patient_code || prev.patInitials,
           patDob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : prev.patDob,
           patAge: p.age_value ? String(p.age_value) : prev.patAge,
-          patAgeUnits: p.age_unit || prev.patAgeUnits,
-          patGender: p.sex || prev.patGender,
+          patAgeUnits: p.age_unit || prev.patAgeUnits || 'Years',
+          patGender: p.sex || prev.patGender || 'Male',
           patWeight: p.weight_kg ? String(p.weight_kg) : prev.patWeight,
+          patWeightUnits: prev.patWeightUnits || 'kg',
           patHeight: p.height_cm ? String(p.height_cm) : prev.patHeight,
+          patHeightUnits: prev.patHeightUnits || 'cm',
           patEthnicity: p.ethnicity || prev.patEthnicity,
         };
       });
-      
+
       // Hydrate Reporters
       if (data.reporters && data.reporters.length > 0) {
         const newTabs = data.reporters.map(r => ({
           id: r.reporter_id || Date.now() + Math.random(),
           backendId: r.reporter_id,
-          sal: r.salutation || '',
+          sal: r.salutation || r.sal || '',
           firstName: r.first_name || '',
-          middleName: r.middle_name || '',
           lastName: r.last_name || '',
           suffix: r.suffix || '',
           hcp: r.health_care_professional || '',
@@ -560,7 +677,7 @@ export default function CaseDetailPage() {
         setReporterTabs(newTabs);
         setActiveReporterTab(newTabs[0].id);
       }
-      
+
       // Hydrate Products
       if (data.products && data.products.length > 0) {
         setProductTabs(data.products.map(prod => ({
@@ -585,7 +702,7 @@ export default function CaseDetailPage() {
         setEventTabs(data.events.map(evt => {
           let criteria = [];
           if (evt.serious_criteria) {
-            try { criteria = JSON.parse(evt.serious_criteria); } catch(e) { criteria = []; }
+            try { criteria = JSON.parse(evt.serious_criteria); } catch (e) { criteria = []; }
           }
           return {
             id: evt.event_id,
@@ -601,39 +718,48 @@ export default function CaseDetailPage() {
           };
         }));
         setActiveEventTab(data.events[0].event_id);
-        
+
         const loadedAssessments = [];
         data.events.forEach(evt => {
           if (evt.causalities && evt.causalities.length > 0) {
             evt.causalities.forEach(c => {
-               const prodId = data.products?.find(p => p.product_id === c.product_id)?.product_id || c.product_id;
-               let parsedListedness = {};
-               try {
-                 if (c.listedness_data) parsedListedness = JSON.parse(c.listedness_data);
-               } catch (e) {}
-               
-               loadedAssessments.push({
-                  productId: prodId,
-                  eventId: evt.event_id,
-                  causalityReported: c.causality_reported || '',
-                  causalityDetermined: c.causality_determined || '',
-                  seriousness: c.seriousness || '',
-                  ...parsedListedness
-               });
+              const prodId = data.products?.find(p => p.product_id === c.product_id)?.product_id || c.product_id;
+              let parsedListedness = {};
+              try {
+                if (c.listedness_data) parsedListedness = JSON.parse(c.listedness_data);
+              } catch (e) { }
+
+              loadedAssessments.push({
+                productId: prodId,
+                eventId: evt.event_id,
+                causalityReported: c.causality_reported || '',
+                causalityDetermined: c.causality_determined || '',
+                seriousness: c.seriousness || '',
+                ...parsedListedness
+              });
             });
           }
         });
         if (loadedAssessments.length > 0) setEventAssessments(loadedAssessments);
       }
-      
+
+      // Hydrate Contacts
+      if (parsedAnalysis.contacts && Array.isArray(parsedAnalysis.contacts)) {
+        setContacts(parsedAnalysis.contacts);
+      } else {
+        setContacts([]);
+      }
+
       // Hydrate Action Items
-      if (data.action_items && data.action_items.length > 0) {
+      if (parsedAnalysis.actionItems && Array.isArray(parsedAnalysis.actionItems)) {
+        setActionItems(parsedAnalysis.actionItems);
+      } else if (data.action_items && data.action_items.length > 0) {
         setActionItems(data.action_items.map(item => ({
           id: item.action_id,
           backendId: item.action_id,
-          dateOpen: item.created_at ? new Date(item.created_at).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}).toUpperCase().replace(/ /g, '-') : '00-MMM-0000',
-          dateDue: item.due_date ? new Date(item.due_date).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}).toUpperCase().replace(/ /g, '-') : '00-MMM-0000',
-          dateCompleted: item.completed_at ? new Date(item.completed_at).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}).toUpperCase().replace(/ /g, '-') : '00-MMM-0000',
+          dateOpen: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+          dateDue: item.due_date ? new Date(item.due_date).toISOString().split('T')[0] : '',
+          dateCompleted: item.completed_at ? new Date(item.completed_at).toISOString().split('T')[0] : '',
           code: item.action_type || '',
           description: item.description || '',
           group: 'Data Entry',
@@ -642,7 +768,56 @@ export default function CaseDetailPage() {
       } else {
         setActionItems([]);
       }
-      
+
+      // Hydrate Routing Comments
+      if (parsedAnalysis.routingComments && Array.isArray(parsedAnalysis.routingComments)) {
+        setRoutingComments(parsedAnalysis.routingComments);
+      } else if (data.workflow_logs && data.workflow_logs.length > 0) {
+        setRoutingComments(data.workflow_logs.map((log, idx) => ({
+          id: log.log_id || idx + 1,
+          date: log.action_time ? new Date(log.action_time).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          user: log.user?.full_name || log.user?.username || '',
+          comment: log.comments || ''
+        })));
+      } else {
+        setRoutingComments([
+          { id: 2, date: new Date().toISOString().split('T')[0], user: '', comment: '' },
+          { id: 1, date: new Date().toISOString().split('T')[0], user: '', comment: '' },
+        ]);
+      }
+
+      // Hydrate Patient History
+      const rawHistory = data.patient?.patient_history_data || data.patient_history_data;
+      if (rawHistory) {
+        try {
+          const parsed = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setPatientHistories(parsed);
+          }
+        } catch (e) {
+          console.error("Failed to parse patient_history_data", e);
+        }
+      }
+
+      // Hydrate Lab Data
+      const rawLab = data.patient?.lab_data || data.lab_data;
+      if (rawLab) {
+        try {
+          const parsed = typeof rawLab === 'string' ? JSON.parse(rawLab) : rawLab;
+          if (parsed.tests && Array.isArray(parsed.tests) && parsed.tests.length > 0) {
+            setLabTests(parsed.tests);
+          }
+          if (parsed.dates && Array.isArray(parsed.dates) && parsed.dates.length > 0) {
+            setLabDates(parsed.dates);
+          }
+          if (parsed.results && typeof parsed.results === 'object') {
+            setLabResults(parsed.results);
+          }
+        } catch (e) {
+          console.error("Failed to parse lab_data", e);
+        }
+      }
+
       setLoading(false);
     }).catch(err => {
       console.error(err);
@@ -696,14 +871,16 @@ export default function CaseDetailPage() {
 
   const addFollowUpRow = (isSignificant) => {
     const newId = Date.now();
+    const today = new Date().toISOString().split('T')[0];
     setForm(p => ({
       ...p,
       followUps: [...(p.followUps || []), {
         id: newId,
-        followUpReceived: '',
-        safetyReceived: '00-MMM-0000',
+        followUpReceived: today,
+        safetyReceived: today,
         significant: isSignificant,
         dataCleanUp: false,
+        amendment: false,
         justification: ''
       }]
     }));
@@ -737,33 +914,179 @@ export default function CaseDetailPage() {
     setForm(p => ({
       ...p,
       patGender: newGender,
-      ...(newGender === 'Male' ? { patPregnant: '', patDateOfLmp: '' } : {})
+      ...(newGender === 'Male' ? { patPregnant: '', patDateOfLmp: '', patBreastfeeding: false } : {})
     }));
   };
 
-  const [labTests, setLabTests] = useState([]);
+  const handleDobChange = (e) => {
+    const dobVal = e.target.value;
+    if (!dobVal) {
+      setForm(p => ({ ...p, patDob: '', patAge: '', patAgeUnits: p.patAgeUnits || 'Years', patAgeGroup: '' }));
+      return;
+    }
+    const birth = new Date(dobVal);
+    const now = new Date();
+    if (!isNaN(birth.getTime())) {
+      const diffMs = now - birth;
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      let ageVal = '';
+      let ageUnit = 'Years';
+      if (diffDays <= 30) {
+        ageVal = Math.max(0, diffDays);
+        ageUnit = 'Days';
+      } else if (diffDays < 730) {
+        const diffMonths = (now.getFullYear() - birth.getFullYear()) * 12 + (now.getMonth() - birth.getMonth());
+        ageVal = Math.max(1, diffMonths);
+        ageUnit = 'Months';
+      } else {
+        let years = now.getFullYear() - birth.getFullYear();
+        const m = now.getMonth() - birth.getMonth();
+        if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) {
+          years--;
+        }
+        ageVal = Math.max(0, years);
+        ageUnit = 'Years';
+      }
+      const group = calculateAgeGroup(ageVal, ageUnit);
+      setForm(p => ({
+        ...p,
+        patDob: dobVal,
+        patAge: String(ageVal),
+        patAgeUnits: ageUnit,
+        patAgeGroup: group
+      }));
+    } else {
+      setForm(p => ({ ...p, patDob: dobVal }));
+    }
+  };
+
+  // Patient History State
+  const [patientHistories, setPatientHistories] = useState([
+    { id: 1, startDate: '', stopDate: '', ongoing: false, condition: '', conditionType: '', verbatim: '', indication: '', reaction: '', soc: '', hlgt: '', pt: '', codedPt: '', llt: '', reactionPt: '', notes: '' },
+    { id: 2, startDate: '', stopDate: '', ongoing: false, condition: '', conditionType: '', verbatim: '', indication: '', reaction: '', soc: '', hlgt: '', pt: '', codedPt: '', llt: '', reactionPt: '', notes: '' },
+  ]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState(null);
+
+  const handleAddHistory = () => {
+    const newHist = {
+      id: Date.now(),
+      startDate: '',
+      stopDate: '',
+      ongoing: false,
+      condition: '',
+      conditionType: '',
+      verbatim: '',
+      indication: '',
+      reaction: '',
+      soc: '',
+      hlgt: '',
+      pt: '',
+      codedPt: '',
+      llt: '',
+      reactionPt: '',
+      notes: ''
+    };
+    setPatientHistories(prev => [...prev, newHist]);
+    setSelectedHistoryId(newHist.id);
+  };
+
+  const handleDeleteHistory = (idToDelete) => {
+    const targetId = idToDelete || selectedHistoryId;
+    if (targetId) {
+      setPatientHistories(prev => prev.filter(h => h.id !== targetId));
+      if (selectedHistoryId === targetId) setSelectedHistoryId(null);
+    } else if (patientHistories.length > 0) {
+      setPatientHistories(prev => prev.slice(0, -1));
+    }
+  };
+
+  const handleCopyHistory = () => {
+    const target = patientHistories.find(h => h.id === selectedHistoryId) || patientHistories[patientHistories.length - 1];
+    if (target) {
+      const copied = { ...target, id: Date.now() };
+      setPatientHistories(prev => [...prev, copied]);
+      setSelectedHistoryId(copied.id);
+    }
+  };
+
+  const handleMoveHistoryUp = () => {
+    if (!selectedHistoryId) return;
+    setPatientHistories(prev => {
+      const idx = prev.findIndex(h => h.id === selectedHistoryId);
+      if (idx <= 0) return prev;
+      const copy = [...prev];
+      const temp = copy[idx - 1];
+      copy[idx - 1] = copy[idx];
+      copy[idx] = temp;
+      return copy;
+    });
+  };
+
+  const handleMoveHistoryDown = () => {
+    if (!selectedHistoryId) return;
+    setPatientHistories(prev => {
+      const idx = prev.findIndex(h => h.id === selectedHistoryId);
+      if (idx < 0 || idx >= prev.length - 1) return prev;
+      const copy = [...prev];
+      const temp = copy[idx + 1];
+      copy[idx + 1] = copy[idx];
+      copy[idx] = temp;
+      return copy;
+    });
+  };
+
+  const updateHistory = (id, field, value) => {
+    setPatientHistories(prev => prev.map(h => h.id === id ? { ...h, [field]: value } : h));
+  };
+
+  // Lab Data State
+  const [labTests, setLabTests] = useState([
+    { id: 1, reported: '', name: '', units: '', low: '', high: '', encoded: false }
+  ]);
+  const [labDates, setLabDates] = useState([
+    { id: 1, date: '' },
+    { id: 2, date: '' }
+  ]);
+  const [labResults, setLabResults] = useState({});
 
   const handleAddLabTest = () => {
     setLabTests(p => [...p, { id: Date.now(), reported: '', name: '', units: '', low: '', high: '', encoded: false }]);
   };
 
-  const removeLabTest = (id) => {
+  const handleDeleteLabTest = (id) => {
     setLabTests(p => p.filter(t => t.id !== id));
   };
+  const removeLabTest = handleDeleteLabTest;
 
   const updateLabTest = (id, field, value) => {
-    setLabTests(p => {
-      const newTests = [...p];
-      const index = newTests.findIndex(t => t.id === id);
-      if (index !== -1) {
-        newTests[index] = { ...newTests[index], [field]: value };
-      }
-      return newTests;
-    });
+    setLabTests(p => p.map(t => t.id === id ? { ...t, [field]: value } : t));
   };
 
-  const [dosageTabs, setDosageTabs] = useState([{ 
-    id: 1, 
+  const handleAddDate = () => {
+    setLabDates(p => [...p, { id: Date.now(), date: '' }]);
+  };
+
+  const handleDeleteLabDate = (id) => {
+    setLabDates(p => p.filter(d => d.id !== id));
+  };
+
+  const updateLabDate = (id, newDate) => {
+    setLabDates(p => p.map(d => d.id === id ? { ...d, date: newDate } : d));
+  };
+
+  const updateLabResult = (dateId, testId, field, value) => {
+    const key = `${dateId}_${testId}`;
+    setLabResults(p => ({
+      ...p,
+      [key]: {
+        ...(p[key] || { value: '', unit: '', assessment: '', notes: '' }),
+        [field]: value
+      }
+    }));
+  };
+
+  const [dosageTabs, setDosageTabs] = useState([{
+    id: 1,
     name: 'New Regimen',
     startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
     doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
@@ -795,16 +1118,6 @@ export default function CaseDetailPage() {
       }
     }
   }, [activeRegimen?.ongoing, activeRegimen?.startDate, activeRegimen?.stopDate, activeDosageTab]);
-
-  const [labDates, setLabDates] = useState([]);
-
-  const handleAddDate = () => {
-    setLabDates(p => [...p, { id: Date.now(), date: '' }]);
-  };
-
-  const updateLabDate = (id, newDate) => {
-    setLabDates(p => p.map(d => d.id === id ? { ...d, date: newDate } : d));
-  };
 
   const [productIndications, setProductIndications] = useState([]);
   const [activeIndicationId, setActiveIndicationId] = useState(null);
@@ -852,7 +1165,7 @@ export default function CaseDetailPage() {
     if (activeIcdContext) {
       const title = stripHtml(entity.title);
       const code = entity.theCode || entity.id.split('/').pop();
-      
+
       if (activeIcdContext.type === 'lab') {
         updateLabTest(activeIcdContext.id, 'name', title);
         updateLabTest(activeIcdContext.id, 'encoded', true);
@@ -874,6 +1187,26 @@ export default function CaseDetailPage() {
           }
           return tab;
         }));
+      } else if (activeIcdContext.type === 'patientHistory') {
+        const socVal = entity.block ? stripHtml(entity.block) : '';
+        const hlgtVal = entity.category ? stripHtml(entity.category) : '';
+        const ptVal = entity.theCode ? `${title} [${entity.theCode}]` : title;
+
+        setPatientHistories(prev => prev.map(hist => {
+          if (hist.id === activeIcdContext.id) {
+            return {
+              ...hist,
+              reaction: hist.reaction || title,
+              soc: socVal,
+              hlgt: hlgtVal,
+              pt: ptVal,
+              codedPt: socVal || title,
+              llt: hlgtVal || title,
+              reactionPt: ptVal || title
+            };
+          }
+          return hist;
+        }));
       }
     }
     setShowIcdBrowser(false);
@@ -886,33 +1219,31 @@ export default function CaseDetailPage() {
   };
 
   const handleJustificationOk = () => {
-    setForm(p => {
-      const newFollowUps = [...(p.followUps || [])];
-      const index = newFollowUps.findIndex(f => f.id === activeJustificationRowId);
-      if (index !== -1) {
-        newFollowUps[index].justification = justificationText;
-      }
-      return { ...p, followUps: newFollowUps };
-    });
+    if (activeJustificationRowId === 'INITIAL_JUSTIFICATION') {
+      setForm(p => ({ ...p, initialJustification: justificationText }));
+    } else {
+      setForm(p => {
+        const newFollowUps = [...(p.followUps || [])];
+        const index = newFollowUps.findIndex(f => f.id === activeJustificationRowId);
+        if (index !== -1) {
+          newFollowUps[index] = { ...newFollowUps[index], justification: justificationText };
+        }
+        return { ...p, followUps: newFollowUps };
+      });
+    }
     setShowJustificationModal(false);
   };
 
   useEffect(() => {
-    if (form.patAge) {
-      const age = parseInt(form.patAge, 10);
-      if (!isNaN(age)) {
-        let group = '';
-        if (age <= 12) group = 'Child';
-        else if (age >= 13 && age <= 19) group = 'Teenager';
-        else if (age >= 20 && age <= 64) group = 'Adult';
-        else if (age >= 65) group = 'Elderly';
-
-        if (form.patAgeGroup !== group) {
-          setForm(p => ({ ...p, patAgeGroup: group }));
-        }
+    if (form.patAge !== undefined && form.patAge !== '') {
+      const group = calculateAgeGroup(form.patAge, form.patAgeUnits || 'Years');
+      if (form.patAgeGroup !== group) {
+        setForm(p => ({ ...p, patAgeGroup: group }));
       }
+    } else if (form.patAgeGroup) {
+      setForm(p => ({ ...p, patAgeGroup: '' }));
     }
-  }, [form.patAge]);
+  }, [form.patAge, form.patAgeUnits]);
 
   useEffect(() => {
     const handleSave = async () => {
@@ -923,24 +1254,59 @@ export default function CaseDetailPage() {
       if (!id) return;
       setIsSaving(true);
       try {
-        // Save General Case Info
+        const analysisDataObj = {
+          caseNarrative: form.caseNarrative || '',
+          caseComment: form.caseComment || '',
+          localEvaluator: form.localEvaluator || '',
+          localEvaluatorComment: form.localEvaluatorComment || '',
+          companyComment: form.companyComment || '',
+          evaluationSimilarEvents: form.evaluationSimilarEvents || '',
+          caseSeriousSummary: form.caseSeriousSummary || form.caseSerious || '',
+          caseSeriousNotes: form.caseSeriousNotes || '',
+          companyAgentCausal: form.companyAgentCausal || '',
+          companyAgentCausalNotes: form.companyAgentCausalNotes || '',
+          listednessDetermination: form.listednessDetermination || '',
+          listednessDeterminationNotes: form.listednessDeterminationNotes || '',
+          caseOutcome: form.caseOutcome || '',
+          caseOutcomeNotes: form.caseOutcomeNotes || '',
+          companyDiagnosisNotes: form.companyDiagnosisNotes || '',
+          // Activities Data
+          contacts: contacts || [],
+          actionItems: actionItems || [],
+          routingComments: routingComments || [],
+          caseLockStatus: form.caseLockStatus || 'Unlocked',
+          closureDate: form.closureDate || '',
+          lockedOrClosedBy: form.lockedOrClosedBy || '',
+          caseLockNotes: form.caseLockNotes || '',
+        };
+
+        // Save General Case Info & Analysis
         await api.put(`/cases/${id}`, {
           receipt_date: form.caseReceiptDate,
           aware_date: form.safetyReceiptDate,
           case_type: form.caseReportType,
-          serious_flag: form.caseSerious === 'Yes' ? 'Y' : 'N'
+          case_country: form.caseCountry,
+          serious_flag: (form.caseSerious === 'Yes' || form.caseSeriousSummary === 'Yes') ? 'Y' : 'N',
+          case_narrative: form.caseNarrative || '',
+          analysis_data: JSON.stringify(analysisDataObj),
+          patient_history_data: JSON.stringify(patientHistories),
+          lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
         });
 
         // Save Patient Info
         await api.post(`/cases/${id}/patient`, {
-          patient_code: form.patInitials,
+          first_name: form.patFirstName,
+          last_name: form.patLastName,
+          patient_code: [form.patFirstName, form.patLastName].filter(Boolean).join(' ') || form.patInitials,
           dob: form.patDob,
           age_value: form.patAge,
           age_unit: form.patAgeUnits,
           sex: form.patGender,
           weight_kg: form.patWeight,
           height_cm: form.patHeight,
-          ethnicity: form.patEthnicity
+          ethnicity: form.patEthnicity,
+          patient_history_data: JSON.stringify(patientHistories),
+          lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
         });
 
         // Upsert Reporters
@@ -977,7 +1343,7 @@ export default function CaseDetailPage() {
           if (rep.backendId) {
             try {
               await api.put(`/cases/${id}/reporters/${rep.backendId}`, reporterPayload);
-            } catch(e) {
+            } catch (e) {
               await api.post(`/cases/${id}/reporters`, reporterPayload);
             }
           } else {
@@ -1018,13 +1384,13 @@ export default function CaseDetailPage() {
             .map(a => {
               const prod = productTabs.find(p => p.id === a.productId);
               if (!prod || !prod.backendId) return null;
-              
+
               // Extract only listedness keys
               const listednessData = {};
               Object.keys(a).forEach(k => {
                 if (k.startsWith('listedness-')) listednessData[k] = a[k];
               });
-              
+
               return {
                 product_id: prod.backendId,
                 causality_reported: a.causalityReported || null,
@@ -1068,7 +1434,7 @@ export default function CaseDetailPage() {
         // Upsert Action Items
         for (const item of actionItems) {
           if (!item.code && !item.description) continue;
-          
+
           if (item.backendId) {
             await api.put(`/cases/${id}/action-items/${item.backendId}`, {
               action_type: item.code || 'Follow-up',
@@ -1119,7 +1485,7 @@ export default function CaseDetailPage() {
       if (!form.caseReceiptDate) errors.push("GENERAL: Initial Receipt Date is required.");
       if (!form.caseCountry) errors.push("GENERAL: Case Country is required.");
       if (!form.patId && !form.patInitials && !form.patFirstName) errors.push("PATIENT: Patient ID, Initials, or Name is required.");
-      
+
       if (productTabs.length === 0) {
         errors.push("PRODUCTS: At least one Suspect Product is required.");
       } else {
@@ -1169,7 +1535,7 @@ export default function CaseDetailPage() {
       try {
         await api.post(`/cases/${id}/lock`);
         alert("Case locked successfully. Other users can no longer see or edit this case.");
-        setCaseData(p => ({...p, locked_by: user?.username}));
+        setCaseData(p => ({ ...p, locked_by: user?.username }));
         setManualLock(true);
       } catch (err) {
         console.error("Failed to lock case:", err);
@@ -1179,7 +1545,7 @@ export default function CaseDetailPage() {
 
     if (!isReadOnly && caseData && !caseData.locked_by && id) {
       api.post(`/cases/${id}/lock`).then(() => {
-        setCaseData(p => ({...p, locked_by: user?.username}));
+        setCaseData(p => ({ ...p, locked_by: user?.username }));
       }).catch(err => console.error("Auto-lock failed", err));
     }
 
@@ -1206,7 +1572,7 @@ export default function CaseDetailPage() {
       window.removeEventListener('route_case', handleRouteCase);
       window.removeEventListener('lock_case', handleLockCase);
     };
-  }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, labTests, labDates, isReadOnly, caseData, user]);
+  }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, routingComments, patientHistories, labTests, labDates, labResults, isReadOnly, caseData, user]);
 
   useEffect(() => {
     if (printLayout) {
@@ -1247,6 +1613,77 @@ export default function CaseDetailPage() {
     return state;
   };
 
+  const [collapsedSections, setCollapsedSections] = useState({});
+  const toggleSection = (key) => {
+    setCollapsedSections(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+  const isCollapsed = (key) => !!collapsedSections[key];
+
+  const CollapseBtn = ({ sectionKey, className = "" }) => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleSection(sectionKey);
+      }}
+      className={cn(
+        "w-3 h-3 bg-slate-50 text-black hover:bg-slate-200 active:scale-95 text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm transition-all cursor-pointer select-none leading-none",
+        className
+      )}
+      title={isCollapsed(sectionKey) ? "Expand section" : "Collapse section"}
+      aria-label={isCollapsed(sectionKey) ? "Expand section" : "Collapse section"}
+    >
+      {isCollapsed(sectionKey) ? '+' : '−'}
+    </button>
+  );
+
+  const handleGenerateNarrative = () => {
+    const ageGender = [form.patAge ? `${form.patAge} ${form.patAgeUnits || 'year'}-old` : '', form.patGender ? (form.patGender.toLowerCase() === 'm' || form.patGender.toLowerCase() === 'male' ? 'male' : (form.patGender.toLowerCase() === 'f' || form.patGender.toLowerCase() === 'female' ? 'female' : form.patGender)) : 'patient'].filter(Boolean).join(' ');
+    const drugName = productTabs[0]?.name || productTabs[0]?.genericName || 'the suspect product';
+    const drugDose = [productTabs[0]?.concentration, productTabs[0]?.units].filter(Boolean).join(' ');
+    const indication = productTabs[0]?.indications?.[0]?.reported;
+    const eventsReported = eventTabs.map(e => e.descriptionReported || e.name || e.descriptionCoded).filter(Boolean).join(', ') || 'an adverse event';
+    const onsetDate = eventTabs[0]?.onsetDate || eventTabs[0]?.dateOfOnset;
+    const outcome = eventTabs[0]?.outcome || form.caseOutcome;
+
+    let narrative = `This case report concerns a ${ageGender} who experienced ${eventsReported} following administration of ${drugName}`;
+    if (drugDose) narrative += ` (${drugDose})`;
+    if (indication) narrative += ` indicated for ${indication}`;
+    if (onsetDate) narrative += `. The adverse event was first observed on ${onsetDate}`;
+    narrative += `.`;
+    if (outcome) narrative += ` Final event outcome was noted as ${outcome}.`;
+    if (form.patMedicalHistory) narrative += ` Relevant patient medical history: ${form.patMedicalHistory}.`;
+
+    setForm(prev => ({ ...prev, caseNarrative: narrative }));
+  };
+
+  const handleGenerateCaseComment = () => {
+    const drug = productTabs[0]?.name || productTabs[0]?.genericName || 'the suspect drug';
+    const evts = eventTabs.map(e => e.descriptionReported || e.name).filter(Boolean).join(', ') || 'reported event(s)';
+    setForm(prev => ({
+      ...prev,
+      caseComment: `Based on available clinical data and temporal relationship, a causal role of ${drug} in relation to ${evts} cannot be ruled out.`
+    }));
+  };
+
+  const handleGenerateCompanyComment = () => {
+    const drug = productTabs[0]?.name || productTabs[0]?.genericName || 'the product';
+    setForm(prev => ({
+      ...prev,
+      companyComment: `The reported safety profile for ${drug} is consistent with the current Core Data Sheet and applicable product labeling. Routine pharmacovigilance surveillance remains active.`
+    }));
+  };
+
+  const handleGenerateSimilarEvents = () => {
+    setForm(prev => ({
+      ...prev,
+      evaluationSimilarEvents: `A cumulative search of the safety database does not indicate an unexpected or disproportionate reporting frequency for this event-product combination.`
+    }));
+  };
+
   // Shared classes
   const inp = "h-7 border border-slate-200 rounded px-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/30 focus:border-emerald-400 w-full transition-all duration-150";
   const sel = "h-7 border border-slate-200 rounded px-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/30 focus:border-emerald-400 w-full appearance-none transition-all duration-150";
@@ -1255,1004 +1692,1283 @@ export default function CaseDetailPage() {
 
   return (
     <>
-    <div className="min-h-full bg-slate-50/50 flex flex-col font-sans text-[12px] print:hidden">
-      {/* ===== Case Title Bar ===== */}
-      <div className="px-4 py-2.5 flex justify-between items-center bg-white border-b border-slate-200 shadow-sm z-10">
-        <div className="flex items-center gap-2">
-          <span className="text-amber-500 text-lg leading-none">{caseData?.locked_by ? '🔒' : '🔓'}</span>
-          <h1 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-            CaseForm - {caseData?.case_number || '2010NA000028'} {form.studyId} "JY"
-          </h1>
-        </div>
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-          {caseData?.student && (
-            <span className="ml-2 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
-              Creator: {caseData.student.full_name}
-            </span>
-          )}
-          <span className="ml-2">Case Status :</span> 
-          <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md">
-            <span className="text-gray-500">📋</span> {getDisplayStatus(caseData?.workflow_state)}
-            {hasValidationWarning && (
-              <div 
-                className="w-2.5 h-2.5 bg-orange-400 border border-orange-500 cursor-pointer ml-1.5 rounded-full shadow-sm animate-pulse"
-                onDoubleClick={() => setShowValidationModal(true)}
-                title="Double-click to view validations"
-              ></div>
-            )}
-          </span>
-          {(() => {
-            const { dueDate, phase } = getDueDate(caseData);
-            const status = getDueStatus(dueDate);
-            if (!dueDate) return null;
-            return (
-              <span className={`ml-2 flex items-center gap-1.5 border px-2 py-1 rounded-md font-bold ${getDueBadgeClasses(status)}`}>
-                <span>⏰</span>
-                <span>Due: {formatDueDate(dueDate)}</span>
-                <span className="text-[10px] font-normal">({phase})</span>
-                {status === 'overdue' && <span className="text-[10px] font-bold animate-pulse">OVERDUE</span>}
-                {status === 'due-today' && <span className="text-[10px] font-bold">TODAY</span>}
+      <div className="min-h-full bg-slate-50/50 flex flex-col font-sans text-[12px] print:hidden">
+        {/* ===== Case Title Bar ===== */}
+        <div className="px-4 py-2.5 flex justify-between items-center bg-white border-b border-slate-200 shadow-sm z-10">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-500 text-lg leading-none">{caseData?.locked_by ? '🔒' : '🔓'}</span>
+            <h1 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              CaseForm - {caseData?.case_number || '2010NA000028'} {form.studyId} "JY"
+            </h1>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            {caseData?.student && (
+              <span className="ml-2 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+                Creator: {caseData.student.full_name}
               </span>
-            );
-          })()}
-        </div>
-      </div>
-
-      {/* ===== Form Tabs ===== */}
-      <div className="flex items-end px-4 pt-1.5 bg-white border-b border-slate-200 relative z-0">
-        <div className="flex flex-1 gap-0.5">
-          {caseTabs.map((tab, i) => (
-            <div key={i} onClick={() => {
-              setActiveTab(tab);
-              if (tab === 'Patient') setActiveSubTab('Patient');
-              if (tab === 'Events') setActiveSubTab('Event');
-              if (tab === 'Analysis') setActiveSubTab('Case Analysis');
-            }} className={cn("px-4 py-1.5 text-xs border border-slate-200 border-b-0 rounded-t-md cursor-pointer whitespace-nowrap transition-colors duration-150",
-              tab === activeTab ? "bg-white font-bold text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700")}>
-              {tab}
-            </div>
-          ))}
-        </div>
-        {/* Status Indicators */}
-        <div className="absolute right-4 bottom-1 flex items-center gap-6 text-[10px] font-bold">
-          <div className="flex items-center gap-1">
-            
-          </div>
-          
-        </div>
-      </div>
-
-      {/* Sub Tabs for Patient */}
-      {activeTab === 'Patient' && (
-        <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200">
-          <div onClick={() => setActiveSubTab('Patient')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Patient' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
-            Patient
-          </div>
-          <div onClick={() => setActiveSubTab('Parent')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Parent' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
-            Parent
-          </div>
-        </div>
-      )}
-
-      {/* Sub Tabs for Products */}
-      {activeTab === 'Products' && (
-        <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200 items-end">
-          {productTabs.map(tab => (
-            <div 
-              key={tab.id}
-              onClick={() => setActiveProductTab(tab.id)}
-              className={cn(
-                "px-3 py-0.5 text-[10px] font-bold border border-gray-400 cursor-pointer shadow-sm rounded-t-sm flex gap-1 items-center",
-                activeProductTab === tab.id 
-                  ? "bg-emerald-100 text-emerald-800 border-emerald-300 z-10 translate-y-[1px] shadow-sm" 
-                  : "bg-slate-100 text-slate-500 hover:bg-slate-200/60"
+            )}
+            <span className="ml-2">Case Status :</span>
+            <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md">
+              <span className="text-gray-500">📋</span> {getDisplayStatus(caseData?.workflow_state)}
+              {hasValidationWarning && (
+                <div
+                  className="w-2.5 h-2.5 bg-orange-400 border border-orange-500 cursor-pointer ml-1.5 rounded-full shadow-sm animate-pulse"
+                  onDoubleClick={() => setShowValidationModal(true)}
+                  title="Double-click to view validations"
+                ></div>
               )}
-            >
-              <span>{tab.name || '(Empty)'}</span>
-              {tab.isDR && <span className="bg-white border border-gray-400 px-0.5 text-[8px] text-amber-600">DR</span>}
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteProductTab(tab.id);
-                }}
+            </span>
+            {(() => {
+              const { dueDate, phase } = getDueDate(caseData);
+              const status = getDueStatus(dueDate);
+              if (!dueDate) return null;
+              return (
+                <span className={`ml-2 flex items-center gap-1.5 border px-2 py-1 rounded-md font-bold ${getDueBadgeClasses(status)}`}>
+                  <span>⏰</span>
+                  <span>Due: {formatDueDate(dueDate)}</span>
+                  <span className="text-[10px] font-normal">({phase})</span>
+                  {status === 'overdue' && <span className="text-[10px] font-bold animate-pulse">OVERDUE</span>}
+                  {status === 'due-today' && <span className="text-[10px] font-bold">TODAY</span>}
+                </span>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* ===== Form Tabs ===== */}
+        <div className="flex items-end px-4 pt-1.5 bg-white border-b border-slate-200 relative z-0">
+          <div className="flex flex-1 gap-0.5">
+            {caseTabs.map((tab, i) => (
+              <div key={i} onClick={() => {
+                setActiveTab(tab);
+                if (tab === 'Patient') setActiveSubTab('Patient');
+                if (tab === 'Events') setActiveSubTab('Event');
+                if (tab === 'Analysis') setActiveSubTab('Case Analysis');
+              }} className={cn("px-4 py-1.5 text-xs border border-slate-200 border-b-0 rounded-t-md cursor-pointer whitespace-nowrap transition-colors duration-150",
+                tab === activeTab ? "bg-white font-bold text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700")}>
+                {tab}
+              </div>
+            ))}
+          </div>
+          {/* Status Indicators */}
+          <div className="absolute right-4 bottom-1 flex items-center gap-6 text-[10px] font-bold">
+            <div className="flex items-center gap-1">
+
+            </div>
+
+          </div>
+        </div>
+
+        {/* Sub Tabs for Patient */}
+        {activeTab === 'Patient' && (
+          <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200">
+            <div onClick={() => setActiveSubTab('Patient')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Patient' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
+              Patient
+            </div>
+            <div onClick={() => setActiveSubTab('Parent')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Parent' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
+              Parent
+            </div>
+          </div>
+        )}
+
+        {/* Sub Tabs for Products */}
+        {activeTab === 'Products' && (
+          <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200 items-end">
+            {productTabs.map(tab => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveProductTab(tab.id)}
                 className={cn(
-                  "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
-                  activeProductTab === tab.id ? "text-black" : "text-gray-500"
+                  "px-3 py-0.5 text-[10px] font-bold border border-gray-400 cursor-pointer shadow-sm rounded-t-sm flex gap-1 items-center",
+                  activeProductTab === tab.id
+                    ? "bg-emerald-100 text-emerald-800 border-emerald-300 z-10 translate-y-[1px] shadow-sm"
+                    : "bg-slate-100 text-slate-500 hover:bg-slate-200/60"
                 )}
-                title="Delete Tab"
               >
-                ✕
-              </button>
+                <span>{tab.name || '(Empty)'}</span>
+                {tab.isDR && <span className="bg-white border border-gray-400 px-0.5 text-[8px] text-amber-600">DR</span>}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteProductTab(tab.id);
+                  }}
+                  className={cn(
+                    "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
+                    activeProductTab === tab.id ? "text-black" : "text-gray-500"
+                  )}
+                  title="Delete Tab"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <div
+              onClick={() => {
+                const newId = Date.now();
+                setProductTabs([...productTabs, {
+                  id: newId,
+                  name: 'New Product',
+                  isDR: false,
+                  genericName: '',
+                  obtainCountry: '',
+                  formulation: '',
+                  authCountry: ''
+                }]);
+                setActiveProductTab(newId);
+              }}
+              className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 rounded-t-sm cursor-pointer hover:bg-gray-100"
+            >
+              (New)
             </div>
-          ))}
-          <div 
-            onClick={() => {
-              const newId = Date.now();
-              setProductTabs([...productTabs, { 
-                id: newId, 
-                name: 'New Product', 
-                isDR: false,
-                genericName: '',
-                obtainCountry: '',
-                formulation: '',
-                authCountry: ''
-              }]);
-              setActiveProductTab(newId);
-            }}
-            className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 rounded-t-sm cursor-pointer hover:bg-gray-100"
-          >
-            (New)
-          </div>
-          <div className="ml-auto flex gap-1">
-            <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
-            <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
-          </div>
-        </div>
-      )}
-
-      {/* Sub Tabs for Events */}
-      {activeTab === 'Events' && (
-        <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200 items-end">
-          <div onClick={() => setActiveSubTab('Event')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Event' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
-            Event
-          </div>
-          <div onClick={() => setActiveSubTab('Event Assessment')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Event Assessment' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
-            Event Assessment
-          </div>
-          {activeSubTab === 'Event Assessment' && (
-            <div className="ml-auto flex gap-1 pb-0.5 pr-4">
-              <button className="h-[18px] px-3 text-[10px] bg-white border border-gray-400 text-blue-700 shadow-sm hover:bg-gray-50">Recalculate</button>
+            <div className="ml-auto flex gap-1">
+              <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
+              <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Sub Tabs for Analysis */}
-      {activeTab === 'Analysis' && (
-        <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200 items-end">
-          {['Case Analysis', 'MedWatch Info'].map(subTab => (
-            <div key={subTab} onClick={() => setActiveSubTab(subTab)} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === subTab ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
-              {subTab}
+        {/* Sub Tabs for Events */}
+        {activeTab === 'Events' && (
+          <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200 items-end">
+            <div onClick={() => setActiveSubTab('Event')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Event' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
+              Event
             </div>
-          ))}
-        </div>
-      )}
+            <div onClick={() => setActiveSubTab('Event Assessment')} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === 'Event Assessment' ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
+              Event Assessment
+            </div>
+            {activeSubTab === 'Event Assessment' && (
+              <div className="ml-auto flex gap-1 pb-0.5 pr-4">
+                <button className="h-[18px] px-3 text-[10px] bg-white border border-gray-400 text-blue-700 shadow-sm hover:bg-gray-50">Recalculate</button>
+              </div>
+            )}
+          </div>
+        )}
 
-      {/* ===== Main Content ===== */}
-      <div className="flex-1 p-2 overflow-y-auto">
-        <fieldset disabled={isReadOnly} className="bg-white border border-gray-300 p-1 space-y-2 min-h-full">
+        {/* Sub Tabs for Analysis */}
+        {activeTab === 'Analysis' && (
+          <div className="flex px-4 pt-1 pb-1.5 bg-slate-50/50 gap-1 border-b border-slate-200 items-end">
+            {['Case Analysis', 'MedWatch Info'].map(subTab => (
+              <div key={subTab} onClick={() => setActiveSubTab(subTab)} className={cn("px-4 py-0.5 text-[11px] font-bold border border-gray-300 cursor-pointer shadow-sm rounded-t-sm", activeSubTab === subTab ? "bg-white text-slate-800 border-b-white z-10 translate-y-[1px] shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}>
+                {subTab}
+              </div>
+            ))}
+          </div>
+        )}
 
-          {activeTab === 'General' && (
-            <>
-              {/* ======== General Information ======== */}
-              <div className="border border-gray-300 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>General Information</div>
-                <div className="p-2 grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div><label className={lbl}>Case Report Type</label><input className={inp} value={form.caseReportType} onChange={h('caseReportType')} /></div>
-                      <div><label className={lbl}>Case Country</label><input className={inp} value={form.caseCountry} onChange={h('caseCountry')} /></div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 pt-1">
-                      <div><label className={lbl}>Case Receipt Date</label><input type="date" className={inp} value={form.caseReceiptDate} onChange={h('caseReceiptDate')} /></div>
-                      <div><label className={lbl}>Safety Receipt Date</label><input type="date" className={inp} value={form.safetyReceiptDate} onChange={h('safetyReceiptDate')} /></div>
-                      <div className="flex items-end gap-1">
-                        <div className="flex-1"><label className={lbl}>Initial Justification</label><input className={cn(inp, "bg-slate-50")} value={form.initialJustification} onChange={h('initialJustification')} /></div>
-                        <span className="w-3 h-3 bg-green-500 rounded-full shrink-0 mb-[3px] shadow-sm"></span>
-                      </div>
-                    </div>
+        {/* ===== Main Content ===== */}
+        <div className="flex-1 p-2 overflow-y-auto">
+          <fieldset disabled={isReadOnly} className="bg-white border border-gray-300 p-1 space-y-2 min-h-full">
 
-                    {/* Follow-ups Table */}
-                    <div className="border border-gray-300 mt-2">
-                      <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[10px] font-bold flex justify-between items-center border-b border-emerald-100">
-                        <span>Follow-ups ({(form.followUps || []).length})</span>
-                        <div className="flex items-center gap-2">
-                          <label className="flex items-center gap-1 cursor-pointer font-normal"><input type="checkbox" className="accent-white w-2.5 h-2.5" />Case Requires Follow-up</label>
-                          <div className="flex gap-0.5">
-                            <button onClick={handleAddFollowUpClick} className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200">Add</button>
-                            <button onClick={handleDeleteFollowUp} className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200">Delete</button>
+            {activeTab === 'General' && (
+              <>
+                {/* ======== General Information ======== */}
+                <div className="border border-gray-300 shadow-sm rounded-sm overflow-hidden">
+                  <div className={cn(secHeader, isCollapsed('generalInfo') && "border-b-0")}>
+                    <span>General Information</span>
+                    <CollapseBtn sectionKey="generalInfo" />
+                  </div>
+                  {!isCollapsed('generalInfo') && (
+                    <div className="p-2 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
+                      <div className="space-y-1">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><label className={lbl}>Case Report Type</label><input className={inp} value={form.caseReportType} onChange={h('caseReportType')} /></div>
+                          <div><label className={lbl}>Case Country</label><input list="all-countries-list" className={inp} value={form.caseCountry} onChange={h('caseCountry')} /></div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 pt-1">
+                          <div><label className={lbl}>Case Receipt Date</label><input type="date" className={cn(inp, "w-full text-[10px]")} value={form.caseReceiptDate || ''} onChange={h('caseReceiptDate')} /></div>
+                          <div><label className={lbl}>Safety Receipt Date</label><input type="date" className={cn(inp, "w-full text-[10px]")} value={form.safetyReceiptDate || ''} onChange={h('safetyReceiptDate')} /></div>
+                          <div className="flex items-end gap-1">
+                            <div className="flex-1"><label className={lbl}>Initial Justification</label><input className={cn(inp, "bg-slate-50 text-[10px]")} value={form.initialJustification} onChange={h('initialJustification')} /></div>
+                            <button
+                              type="button"
+                              onClick={() => openJustificationModal('INITIAL_JUSTIFICATION', form.initialJustification)}
+                              className="w-3.5 h-3.5 rounded-full bg-green-500 border border-green-700 shadow-sm shrink-0 mb-[3px] cursor-pointer hover:bg-green-600 transition-colors"
+                              title="Add / Edit Initial Justification"
+                            ></button>
+                          </div>
+                        </div>
+
+                        {/* Follow-ups Table */}
+                        <div className="border border-gray-300 mt-2">
+                          <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[10px] font-bold flex justify-between items-center border-b border-emerald-100">
+                            <span>Follow-ups ({(form.followUps || []).length})</span>
+                            <div className="flex items-center gap-2">
+                              <label className="flex items-center gap-1 cursor-pointer font-normal"><input type="checkbox" className="accent-white w-2.5 h-2.5" />Case Requires Follow-up</label>
+                              <div className="flex gap-0.5">
+                                <button type="button" onClick={handleAddFollowUpClick} className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer">Add</button>
+                                <button type="button" onClick={handleDeleteFollowUp} className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer">Delete</button>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="min-h-[110px] bg-white overflow-y-auto">
+                            <table className="w-full text-[9px] text-left border-collapse">
+                              <thead>
+                                <tr className="bg-emerald-50 border-b border-slate-200 text-emerald-700">
+                                  <th className="px-1 py-0.5 w-8 border-r border-slate-200 text-center font-normal">#</th>
+                                  <th className="px-1.5 py-0.5 border-r border-slate-200 font-normal min-w-[130px]">Follow-up Received <span className="text-amber-500">▼</span></th>
+                                  <th className="px-1.5 py-0.5 border-r border-slate-200 font-normal min-w-[130px]">Safety Received</th>
+                                  <th className="px-1 py-0.5 border-r border-slate-200 font-normal text-center w-16">Significant</th>
+                                  <th className="px-1 py-0.5 border-r border-slate-200 font-normal text-center w-20">Ammendment</th>
+                                  <th className="px-1.5 py-0.5 font-normal">Follow up Justification</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(form.followUps || []).map((item, idx) => (
+                                  <tr key={item.id} className={idx % 2 === 0 ? "bg-slate-50" : "bg-white"}>
+                                    <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200 text-center align-middle font-bold text-gray-800">
+                                      <label className="flex items-center justify-center cursor-pointer gap-1 text-[10px]">
+                                        <input type="checkbox" className="w-2.5 h-2.5"
+                                          checked={selectedFollowUps.includes(item.id)}
+                                          onChange={(e) => {
+                                            if (e.target.checked) setSelectedFollowUps([...selectedFollowUps, item.id]);
+                                            else setSelectedFollowUps(selectedFollowUps.filter(id => id !== item.id));
+                                          }}
+                                        />
+                                        {idx + 1}
+                                      </label>
+                                    </td>
+                                    <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200">
+                                      <input 
+                                        type="date"
+                                        className={cn(inp, "h-[22px] w-full text-[10px] px-1 bg-white border border-gray-300")} 
+                                        value={formatDateForInput(item.followUpReceived)} 
+                                        onChange={(e) => updateFollowUp(item.id, 'followUpReceived', e.target.value)} 
+                                      />
+                                    </td>
+                                    <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200">
+                                      <input 
+                                        type="date"
+                                        className={cn(inp, "h-[22px] w-full text-[10px] px-1 bg-white border border-gray-300")} 
+                                        value={formatDateForInput(item.safetyReceived)} 
+                                        onChange={(e) => updateFollowUp(item.id, 'safetyReceived', e.target.value)} 
+                                      />
+                                    </td>
+                                    <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200 text-center">
+                                      <input type="checkbox" className="w-3 h-3 cursor-pointer" checked={item.significant} onChange={(e) => updateFollowUp(item.id, 'significant', e.target.checked)} />
+                                    </td>
+                                    <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200 text-center">
+                                      <input 
+                                        type="checkbox" 
+                                        className="w-3 h-3 cursor-pointer" 
+                                        checked={!!(item.amendment ?? item.dataCleanUp)} 
+                                        onChange={(e) => {
+                                          updateFollowUp(item.id, 'amendment', e.target.checked);
+                                          updateFollowUp(item.id, 'dataCleanUp', e.target.checked);
+                                        }} 
+                                      />
+                                    </td>
+                                    <td className="px-1 py-1 border-b border-slate-200">
+                                      <div className="flex items-center gap-1">
+                                        <input className={cn(inp, "h-[22px] flex-1 bg-slate-50 text-[10px]")} value={item.justification || ''} readOnly />
+                                        <button
+                                          type="button"
+                                          onClick={() => openJustificationModal(item.id, item.justification)}
+                                          className="w-3.5 h-3.5 rounded-full bg-green-500 border border-green-700 shadow-sm shrink-0 cursor-pointer hover:bg-green-600"
+                                          title="Add Justification"
+                                        ></button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
                       </div>
-                      <div className="h-[100px] bg-white overflow-y-auto">
-                        <table className="w-full text-[9px] text-left border-collapse">
-                          <thead>
-                            <tr className="bg-emerald-50 border-b border-slate-200 text-emerald-700">
-                              <th className="px-1 py-0.5 w-8 border-r border-slate-200 text-center font-normal">#</th>
-                              <th className="px-1 py-0.5 border-r border-slate-200 font-normal">Follow-up Received <span className="text-amber-500">▼</span></th>
-                              <th className="px-1 py-0.5 border-r border-slate-200 font-normal">Safety Received</th>
-                              <th className="px-1 py-0.5 border-r border-slate-200 font-normal text-center">Significant</th>
-                              <th className="px-1 py-0.5 border-r border-slate-200 font-normal text-center">Data Clean Up</th>
-                              <th className="px-1 py-0.5 font-normal">Follow up Justification</th>
+
+                      {/* Case Classification Table */}
+                      <div className="pt-2 h-full">
+                        <div className="border border-gray-300 h-full flex flex-col bg-white overflow-hidden">
+                          <div className="flex-1 overflow-y-auto">
+                            <table className="w-full text-left text-[10px]">
+                              <thead className="sticky top-0 bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800">
+                                <tr className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-emerald-100">
+                                  <th className="px-1 py-0.5 w-12 text-center font-normal border-r border-emerald-100">#</th>
+                                  <th className="px-1 py-0.5 font-bold flex justify-between items-center">
+                                    Classification
+                                    <div className="flex gap-0.5">
+                                      <button onClick={handleAddClassification} className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 shadow-sm leading-none">Add</button>
+                                      <button onClick={handleDeleteClassification} className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 shadow-sm leading-none">Delete</button>
+                                    </div>
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(form.caseClassifications || []).map((item, idx) => (
+                                  <tr key={item.id} className={idx % 2 === 0 ? "bg-slate-50" : "bg-white"}>
+                                    <td className="px-1 py-1 border-b border-gray-300 border-r border-slate-200 text-center align-top pt-[5px]">
+                                      <label className="flex items-center justify-center cursor-pointer gap-1 text-gray-700 font-normal text-[10px]">
+                                        <input type="checkbox" className="w-2.5 h-2.5"
+                                          checked={selectedClasses.includes(item.id)}
+                                          onChange={(e) => {
+                                            if (e.target.checked) setSelectedClasses([...selectedClasses, item.id]);
+                                            else setSelectedClasses(selectedClasses.filter(id => id !== item.id));
+                                          }}
+                                        />
+                                        {idx + 1}.
+                                      </label>
+                                    </td>
+                                    <td className="px-1 py-1 border-b border-gray-300">
+                                      <input
+                                        className="h-[18px] border border-slate-200 px-1 text-[11px] bg-white focus:outline-none focus:border-blue-500 w-full"
+                                        value={item.text}
+                                        onChange={(e) => {
+                                          const newClasses = [...form.caseClassifications];
+                                          const index = newClasses.findIndex(c => c.id === item.id);
+                                          if (index !== -1) {
+                                            newClasses[index].text = e.target.value;
+                                            setForm(p => ({ ...p, caseClassifications: newClasses }));
+                                          }
+                                        }}
+                                      />
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ======== Study Information ======== */}
+                <div className="border border-slate-200 rounded-sm overflow-hidden shadow-sm">
+                  <div className={cn(secHeader, isCollapsed('studyInfo') && "border-b-0")}>
+                    <div className="flex items-center gap-2">Study Information <button className="h-[16px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 font-normal hover:bg-gray-200 flex items-center gap-1 shadow-sm"><span className="text-amber-500">📂</span> Select</button></div>
+                    <CollapseBtn sectionKey="studyInfo" />
+                  </div>
+                  {!isCollapsed('studyInfo') && (
+                    <div className="p-2 bg-white">
+                      <div className="grid grid-cols-4 gap-2 mb-1">
+                        <div><label className={lbl}>Project ID</label><input className={inp} value={form.projectId} onChange={h('projectId')} /></div>
+                        <div><label className={lbl}>Study ID</label><input className={inp} value={form.studyId} onChange={h('studyId')} /></div>
+                        <div><label className={lbl}>Center ID</label><input className={inp} value={form.centerId} onChange={h('centerId')} /></div>
+                        <div><label className={lbl}>Study Phase</label><input className={inp} value={form.studyPhase} onChange={h('studyPhase')} /></div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 mb-1">
+                        <div className="col-span-1"><label className={lbl}>Study Name</label><input className={inp} value={form.studyName} onChange={h('studyName')} /></div>
+                        <div><label className={lbl}>Other ID</label><input className={inp} value={form.otherId} onChange={h('otherId')} /></div>
+                        <div><label className={lbl}>Study Type</label><select className={cn(sel, "bg-gray-100 text-gray-500")} disabled value={form.studyType}><option>{form.studyType}</option></select></div>
+                        <div><label className={lbl}>Blinding Status</label><select className={sel} value={form.blindingStatus} onChange={h('blindingStatus')}><option>{form.blindingStatus}</option></select></div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="col-span-2 row-span-2 flex flex-col">
+                          <label className={lbl}>Study Description</label>
+                          <textarea className={cn(inp, "h-full min-h-[46px] resize-none leading-tight py-1 bg-white")} value={form.studyDescription} onChange={h('studyDescription')} />
+                        </div>
+                        <div><label className={lbl}>Unblinding Date</label><input type="date" className={inp} value={form.unblindingDate} onChange={h('unblindingDate')} /></div>
+                        <div className="flex gap-2">
+                          <div className="flex-1"><label className={lbl}>Week #</label><input className={inp} value={form.weekNum} onChange={h('weekNum')} /></div>
+                          <div className="flex-1"><label className={lbl}>Visit #</label><input className={inp} value={form.visitNum} onChange={h('visitNum')} /></div>
+                        </div>
+                        <div className="col-start-3 col-span-2 mt-[-20px]"><label className={lbl}>Observe Study Type</label><select className={sel} value={form.observeStudyType} onChange={h('observeStudyType')}><option>{form.observeStudyType}</option></select></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ======== Reporter Information ======== */}
+                <div className="border border-slate-200 rounded-sm overflow-hidden shadow-sm">
+                  <div className={cn(secHeader, isCollapsed('reporterInfo') && "border-b-0")}>
+                    <div className="flex items-center gap-2">Reporter Information ({reporterTabs.length}) <button className="h-[16px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 font-normal hover:bg-gray-200 flex items-center gap-1 shadow-sm"><span className="text-amber-500">📂</span> Select</button></div>
+                    <div className="flex items-center gap-2">
+                      <CollapseBtn sectionKey="reporterInfo" />
+                    </div>
+                  </div>
+                  {!isCollapsed('reporterInfo') && (
+                    <div className="p-2 bg-white">
+                    <div className="flex gap-4">
+                      <div className="flex-1 space-y-1">
+                        {/* Row 1 */}
+                        <div className="flex gap-2">
+                          <div className="w-20">
+                            <label className={lbl}>Sal.</label>
+                            <select className={sel} value={activeReporter.sal || ''} onChange={(e) => updateActiveReporter('sal', e.target.value)}>
+                              <option value=""></option>
+                              <option value="Mr.">Mr.</option>
+                              <option value="Ms.">Ms.</option>
+                              <option value="Dr.">Dr.</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                          <div className="flex-1"><label className={lbl}>First Name</label><input className={inp} value={activeReporter.firstName || ''} onChange={(e) => updateActiveReporter('firstName', e.target.value)} /></div>
+                          <div className="flex-1"><label className={lbl}>Last Name</label><input className={inp} value={activeReporter.lastName || ''} onChange={(e) => updateActiveReporter('lastName', e.target.value)} /></div>
+                          <div className="w-48">
+                            <label className={lbl}>Suffix</label>
+                            <select className={sel} value={activeReporter.suffix || ''} onChange={(e) => updateActiveReporter('suffix', e.target.value)}>
+                              <option value=""></option>
+                              <option value="M.D. (Medical Doctor)">M.D. (Medical Doctor)</option>
+                              <option value="Ph.D. (Doctor of Philosophy)">Ph.D. (Doctor of Philosophy)</option>
+                              <option value="Pharm.D. (Doctor of Pharmacy)">Pharm.D. (Doctor of Pharmacy)</option>
+                              <option value="R.N. (Registered Nurse)">R.N. (Registered Nurse)</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                          <div className="w-32"><label className={lbl}>Occupation</label><input className={inp} value={activeReporter.occupation || ''} onChange={(e) => updateActiveReporter('occupation', e.target.value)} /></div>
+                        </div>
+                        {/* Row 2 */}
+                        <div className="flex gap-2">
+                          <div className="w-1/2 pr-2">
+                            <label className={lbl}>Address</label>
+                            <textarea className={cn(inp, "h-[62px] resize-none w-full")} value={activeReporter.address || ''} onChange={(e) => updateActiveReporter('address', e.target.value)} />
+                          </div>
+                          <div className="w-1/2 space-y-1">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div><label className={lbl}>Institution</label><input className={inp} value={activeReporter.institution || ''} onChange={(e) => updateActiveReporter('institution', e.target.value)} /></div>
+                              <div><label className={lbl}>Department</label><input className={inp} value={activeReporter.department || ''} onChange={(e) => updateActiveReporter('department', e.target.value)} /></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div><label className={lbl}>City</label><input className={inp} value={activeReporter.city || ''} onChange={(e) => updateActiveReporter('city', e.target.value)} /></div>
+                              <div><label className={lbl}>State/Province</label><input className={inp} value={activeReporter.state || ''} onChange={(e) => updateActiveReporter('state', e.target.value)} /></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div><label className={lbl}>Postal Code</label><input className={inp} value={activeReporter.postalCode || ''} onChange={(e) => updateActiveReporter('postalCode', e.target.value)} /></div>
+                              <div><label className={lbl}>Country</label><input list="all-countries-list" className={inp} value={activeReporter.country || ''} onChange={(e) => updateActiveReporter('country', e.target.value)} /></div>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Row 3 */}
+                        <div className="grid grid-cols-4 gap-2">
+                          <div><label className={lbl}>Phone Number</label><input className={inp} value={activeReporter.phone || ''} onChange={(e) => updateActiveReporter('phone', e.target.value)} /></div>
+                          <div><label className={lbl}>Alternate Phone</label><input className={inp} value={activeReporter.altPhone || ''} onChange={(e) => updateActiveReporter('altPhone', e.target.value)} /></div>
+                          <div><label className={lbl}>FAX Number</label><input className={inp} value={activeReporter.fax || ''} onChange={(e) => updateActiveReporter('fax', e.target.value)} /></div>
+                          <div><label className={lbl}>Reporter ID</label><input className={inp} value={activeReporter.reporterId || ''} onChange={(e) => updateActiveReporter('reporterId', e.target.value)} /></div>
+                        </div>
+                        {/* Row 4 */}
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="col-span-2"><label className={lbl}>Email Address</label><input className={inp} value={activeReporter.email || ''} onChange={(e) => updateActiveReporter('email', e.target.value)} /></div>
+                          <div><label className={lbl}>Reporter Type</label><input className={inp} value={activeReporter.reporterType || ''} onChange={(e) => updateActiveReporter('reporterType', e.target.value)} /></div>
+                          <div><label className={lbl}>Reporter's Reference #</label><input className={inp} value={activeReporter.reporterRef || ''} onChange={(e) => updateActiveReporter('reporterRef', e.target.value)} /></div>
+                        </div>
+                        {/* Row 5 */}
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="col-start-3"><label className={lbl}>Report Media</label><input className={inp} value={activeReporter.reportMedia || ''} onChange={(e) => updateActiveReporter('reportMedia', e.target.value)} /></div>
+                        </div>
+                      </div>
+
+                      {/* Right side checkboxes */}
+                      <div className="w-48 pt-4 pl-2 border-l border-gray-300">
+                        <div className="text-[10px] font-bold text-gray-800 mb-2 leading-tight">Report Sent to Regulatory Authority by Reporter?</div>
+                        <div className="space-y-1 text-[10px] text-gray-800 font-semibold">
+                          <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={activeReporter.protectConfidentiality || false} onChange={(e) => updateActiveReporter('protectConfidentiality', e.target.checked)} className="w-3 h-3" /> Protect Confidentiality</label>
+                          <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={activeReporter.primaryReporter || false} onChange={(e) => updateActiveReporter('primaryReporter', e.target.checked)} className="w-3 h-3" /> Primary Reporter</label>
+                          <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={activeReporter.correspondenceContact || false} onChange={(e) => updateActiveReporter('correspondenceContact', e.target.checked)} className="w-3 h-3" /> Correspondence Contact</label>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Inner Tabs for Reporter */}
+                    <div className="mt-2 flex gap-1 border-b border-gray-300 items-end">
+                      {reporterTabs.map((tab, index) => (
+                        <div
+                          key={tab.id}
+                          className={cn("px-3 py-0.5 text-[9px] font-bold border border-gray-400 border-b-0 rounded-t-sm shadow-sm flex items-center cursor-pointer gap-1", activeReporterTab === tab.id ? "bg-emerald-100 text-emerald-800 border-emerald-300 z-10 translate-y-[1px]" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}
+                          onClick={() => setActiveReporterTab(tab.id)}
+                        >
+                          {(() => {
+                            if (!tab.lastName && !tab.firstName) return `Reporter ${index + 1}`;
+                            const namePart = [tab.lastName ? tab.lastName.toUpperCase() : '', tab.firstName].filter(Boolean).join(', ');
+                            const typePart = tab.reporterType ? ` (${tab.reporterType.substring(0, 3)}...)` : '';
+                            return `${namePart}${typePart}`;
+                          })()}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteReporterTab(tab.id);
+                            }}
+                            className={cn("w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors", activeReporterTab === tab.id ? "text-emerald-900" : "text-gray-500")}
+                            title="Delete Reporter"
+                          >✕</button>
+                        </div>
+                      ))}
+                      <div
+                        className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm cursor-pointer hover:bg-gray-100 flex items-center shadow-sm"
+                        onClick={() => {
+                          const newId = Date.now();
+                          setReporterTabs(p => [...p, { id: newId, backendId: null, sal: '', firstName: '', middleName: '', lastName: '', suffix: '', hcp: '', occupation: '', address: '', institution: '', department: '', city: '', state: '', postalCode: '', country: '', phone: '', altPhone: '', fax: '', reporterId: '', reporterRef: '', email: '', reporterType: '', reportMedia: '', intermediary: '', protectConfidentiality: false, primaryReporter: false, correspondenceContact: false }]);
+                          setActiveReporterTab(newId);
+                        }}
+                      >
+                        (New)
+                      </div>
+                    </div>
+                  </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {activeTab === 'Patient' && activeSubTab === 'Patient' && (
+              <>
+                {/* ======== Patient Information ======== */}
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                  <div className={cn(secHeader, isCollapsed('patientInfo') && "border-b-0")}>
+                    <span>Patient Information</span>
+                    <div className="flex items-center gap-1">
+                      <button className="h-6 px-2.5 text-[10px] font-medium bg-white text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Patient Info From Reporter</button>
+                      <button className="h-6 px-2.5 text-[10px] font-medium bg-white text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Current Medical Status</button>
+                      <button className="h-6 px-2.5 text-[10px] font-medium bg-white text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Patient Death Info</button>
+
+                      <CollapseBtn sectionKey="patientInfo" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('patientInfo') && (
+                    <div className="p-2 bg-white grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                        <div><label className={lbl}>Sponsor Identifier</label><input className={inp} value={form.sponsorIdentifier} onChange={h('sponsorIdentifier')} /></div>
+                        <div><label className={lbl}>Pat. ID</label><input className={inp} value={form.patId} onChange={h('patId')} /></div>
+                        <div><label className={lbl}>First Name</label><input className={inp} value={form.patFirstName} onChange={h('patFirstName')} /></div>
+                        <div><label className={lbl}>Last Name</label><input className={inp} value={form.patLastName} onChange={h('patLastName')} /></div>
+                        <div className="col-span-2 pr-1">
+                          <label className={lbl}>Address</label>
+                          <textarea className={cn(inp, "h-[44px] resize-none")} value={form.patAddress} onChange={h('patAddress')} />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1 content-start">
+                        <div><label className={lbl}>Randomization #</label><input className={inp} value={form.randomizationNum} onChange={h('randomizationNum')} /></div>
+                        <div className="row-span-2 flex flex-col justify-end gap-1 pl-2 mb-1">
+                          <label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.patProtectConfidentiality} onChange={hc('patProtectConfidentiality')} className="w-3 h-3" /> Protect Confidentiality</label>
+                          <label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.childOnlyCase} onChange={hc('childOnlyCase')} className="w-3 h-3" /> Child Only Case</label>
+                        </div>
+                        <div className="col-start-1 mt-6"><label className={lbl}>Patient City</label><input className={inp} value={form.patCity} onChange={h('patCity')} /></div>
+                        <div className="col-start-2 mt-6"><label className={lbl}>Country</label><input list="all-countries-list" className={inp} value={form.patCountry} onChange={h('patCountry')} /></div>
+                        <div><label className={lbl}>State/Province</label><input className={inp} value={form.patState} onChange={h('patState')} /></div>
+                        <div><label className={lbl}>Postal Code</label><input className={inp} value={form.patPostalCode} onChange={h('patPostalCode')} /></div>
+                        <div className="col-start-2"><label className={lbl}>Phone Number</label><input className={inp} value={form.patPhone} onChange={h('patPhone')} /></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ======== Patient Details ======== */}
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                  <div className={cn(secHeader, isCollapsed('patientDetails') && "border-b-0")}>
+                    <span>Patient Details</span>
+                    <CollapseBtn sectionKey="patientDetails" />
+                  </div>
+                  {!isCollapsed('patientDetails') && (
+                    <div className="p-3 bg-white space-y-2.5">
+                      {/* Row 1: Full-width grid for Demographics */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5 items-end">
+                        {/* Date of Birth - Full Width */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Date of Birth</label>
+                          <input 
+                            type="date" 
+                            className={cn(inp, "w-full text-[11px]")} 
+                            value={form.patDob || ''} 
+                            onChange={handleDobChange} 
+                          />
+                        </div>
+
+                        {/* Age & Units */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Age & Units</label>
+                          <div className="flex gap-1 w-full">
+                            <input 
+                              type="number"
+                              min="0"
+                              placeholder="Age"
+                              className={cn(inp, "w-1/2 text-[11px]")} 
+                              value={form.patAge ?? ''} 
+                              onChange={h('patAge')} 
+                            />
+                            <select 
+                              className={cn(sel, "w-1/2 text-[11px]")} 
+                              value={form.patAgeUnits || 'Years'} 
+                              onChange={h('patAgeUnits')}
+                            >
+                              <option value="Days">Days</option>
+                              <option value="Months">Months</option>
+                              <option value="Years">Years</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Age Group */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Age Group</label>
+                          <input 
+                            readOnly 
+                            className={cn(inp, "w-full bg-slate-50 font-medium text-slate-700 cursor-default text-[11px]")} 
+                            placeholder="Auto-calculated" 
+                            value={form.patAgeGroup || ''} 
+                          />
+                        </div>
+
+                        {/* Ethnicity */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Ethnicity</label>
+                          <input 
+                            className={cn(inp, "w-full text-[11px]")} 
+                            value={form.patEthnicity || ''} 
+                            onChange={h('patEthnicity')} 
+                            placeholder="Ethnicity"
+                          />
+                        </div>
+
+                        {/* Occupation */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Occupation</label>
+                          <input 
+                            className={cn(inp, "w-full text-[11px]")} 
+                            value={form.patOccupation || ''} 
+                            onChange={h('patOccupation')} 
+                            placeholder="Occupation"
+                          />
+                        </div>
+
+                        {/* Weight with Unit */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Weight</label>
+                          <div className="flex gap-1 w-full">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              placeholder="Weight"
+                              className={cn(inp, "w-3/5 text-[11px]")} 
+                              value={form.patWeight ?? ''} 
+                              onChange={h('patWeight')} 
+                            />
+                            <select 
+                              className={cn(sel, "w-2/5 text-[11px]")} 
+                              value={form.patWeightUnits || 'kg'} 
+                              onChange={h('patWeightUnits')}
+                            >
+                              <option value="kg">kg</option>
+                              <option value="lbs">lbs</option>
+                              <option value="g">g</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Height with Unit */}
+                        <div className="flex flex-col">
+                          <label className={lbl}>Height</label>
+                          <div className="flex gap-1 w-full">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              placeholder="Height"
+                              className={cn(inp, "w-3/5 text-[11px]")} 
+                              value={form.patHeight ?? ''} 
+                              onChange={h('patHeight')} 
+                            />
+                            <select 
+                              className={cn(sel, "w-2/5 text-[11px]")} 
+                              value={form.patHeightUnits || 'cm'} 
+                              onChange={h('patHeightUnits')}
+                            >
+                              <option value="cm">cm</option>
+                              <option value="in">in</option>
+                              <option value="m">m</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Row 2: Gender, Pregnant, LMP, Breastfeeding */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5 items-end pt-2 border-t border-slate-100">
+                        <div className="flex flex-col">
+                          <label className={lbl}>Gender</label>
+                          <select 
+                            className={cn(sel, "w-full text-[11px]")} 
+                            value={form.patGender || 'Male'} 
+                            onChange={handlePatGenderChange}
+                          >
+                            <option>Male</option>
+                            <option>Female</option>
+                            <option>Unknown</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col">
+                          <label className={lbl}>Pregnant</label>
+                          <select 
+                            className={cn(sel, "w-full text-[11px]", form.patGender === 'Male' && "bg-gray-100 text-gray-400 cursor-not-allowed")} 
+                            value={form.patGender === 'Male' ? '' : (form.patPregnant || '')} 
+                            onChange={h('patPregnant')} 
+                            disabled={form.patGender === 'Male'}
+                          >
+                            <option value=""></option>
+                            <option value="Yes">Yes</option>
+                            <option value="No">No</option>
+                            <option value="Unk">Unk</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col lg:col-span-2">
+                          <label className={lbl}>Date of LMP</label>
+                          <input 
+                            type="date" 
+                            className={cn(inp, "w-full text-[11px]", form.patGender === 'Male' && "bg-gray-100 text-gray-400 cursor-not-allowed")} 
+                            value={form.patGender === 'Male' ? '' : (form.patDateOfLmp || '')} 
+                            onChange={h('patDateOfLmp')} 
+                            disabled={form.patGender === 'Male'} 
+                          />
+                        </div>
+
+                        <div className="flex items-center h-[26px] pb-0.5">
+                          <label className={cn(
+                            "flex items-center gap-1.5 text-[11px] font-semibold select-none", 
+                            form.patGender === 'Male' ? "text-gray-400 cursor-not-allowed opacity-60" : "text-gray-700 cursor-pointer"
+                          )}>
+                            <input 
+                              type="checkbox" 
+                              checked={form.patGender === 'Male' ? false : !!form.patBreastfeeding} 
+                              onChange={hc('patBreastfeeding')} 
+                              disabled={form.patGender === 'Male'} 
+                              className="w-3.5 h-3.5 rounded text-teal-600 focus:ring-teal-500 disabled:opacity-40" 
+                            /> 
+                            Breastfeeding
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {form.patPregnant === 'Yes' && form.patGender !== 'Male' && (
+                  <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden mb-2 mt-2">
+                    {/* ======== Pregnancy Information ======== */}
+                    <div className={cn(secHeader, isCollapsed('pregnancyInfo') && "border-b-0")}>
+                      <span>Pregnancy Information</span>
+                      <CollapseBtn sectionKey="pregnancyInfo" />
+                    </div>
+                    {!isCollapsed('pregnancyInfo') && (
+                      <div className="p-1 bg-white">
+                        <div className="border border-gray-300 p-2 bg-white">
+                          <div className="flex gap-2">
+                            <div className="flex-1">
+                              <div className="grid grid-cols-3 gap-2 mb-1">
+                                <div><label className={lbl}>Due Date</label><input type="date" className={inp} value={form.dueDate} onChange={h('dueDate')} /></div>
+                                <div><label className={lbl}>Weeks at Onset</label><input className={inp} value={form.weeksAtOnset} onChange={h('weeksAtOnset')} /></div>
+                                <div><label className={lbl}>Weeks at Exposure</label><input className={inp} value={form.weeksAtExposure} onChange={h('weeksAtExposure')} /></div>
+                              </div>
+                              <div className="flex gap-4 mt-2">
+                                <div className="w-32"><label className={lbl}>Number of Fetus</label><input className={inp} value={form.numOfFetus} onChange={h('numOfFetus')} /></div>
+                                <div className="flex items-end pb-1 gap-4">
+                                  <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="radio" name="pective" checked={form.prospective} onChange={() => setForm(p => ({ ...p, prospective: true, retrospective: false }))} className="w-3 h-3" /> Prospective</label>
+                                  <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="radio" name="pective" checked={form.retrospective} onChange={() => setForm(p => ({ ...p, prospective: false, retrospective: true }))} className="w-3 h-3" /> Retrospective</label>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="w-[200px] border border-gray-300 p-1">
+                              <label className={lbl}>Trimester of Exposure</label>
+                              <div className="space-y-1 mt-1 pl-1">
+                                <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="checkbox" checked={form.trimesterFirst} onChange={hc('trimesterFirst')} className="w-3 h-3" /> First</label>
+                                <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="checkbox" checked={form.trimesterSecond} onChange={hc('trimesterSecond')} className="w-3 h-3" /> Second</label>
+                                <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="checkbox" checked={form.trimesterThird} onChange={hc('trimesterThird')} className="w-3 h-3" /> Third</label>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="border-[2px] border-slate-200 p-1 mt-2 mb-1">
+                            <div className="grid grid-cols-5 gap-2 mb-1">
+                              <div className="col-span-1"><label className={lbl}>Delivery Date</label><input type="date" className={inp} value={form.deliveryDate} onChange={h('deliveryDate')} /></div>
+                              <div className="col-span-1">
+                                <label className={lbl}>Weight</label>
+                                <div className="flex gap-1">
+                                  <input className={cn(inp, "flex-1")} value={form.deliveryWeight} onChange={h('deliveryWeight')} />
+                                  <select className={cn(sel, "w-8 bg-gray-100")}><option></option></select>
+                                </div>
+                              </div>
+                              <div className="col-span-1"><label className={lbl}>APGAR Score #1</label><input className={inp} value={form.apgar1} onChange={h('apgar1')} /></div>
+                              <div className="col-span-1"><label className={lbl}>APGAR Score #2</label><input className={inp} value={form.apgar2} onChange={h('apgar2')} /></div>
+                              <div className="col-span-1"><label className={lbl}>APGAR Score #3</label><input className={inp} value={form.apgar3} onChange={h('apgar3')} /></div>
+                            </div>
+                            <div className="flex gap-2">
+                              <div className="w-[40%]"><label className={lbl}>Delivery Type</label><input className={inp} value={form.deliveryType} onChange={h('deliveryType')} /></div>
+                              <div className="flex-1"><label className={lbl}>Delivery Notes</label><input className={inp} value={form.deliveryNotes} onChange={h('deliveryNotes')} /></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ======== Other Relevant History ======== */}
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                  <div className={cn(secHeader, isCollapsed('patientHistory') && "border-b-0")}>
+                    <span>Other Relevant History ({patientHistories.length})</span>
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" onClick={handleCopyHistory} className="h-[20px] px-2 text-[10px] font-medium bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded shadow-2xs transition-colors cursor-pointer">Copy</button>
+                      <button type="button" onClick={handleAddHistory} className="h-[20px] px-2 text-[10px] font-medium bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded shadow-2xs transition-colors cursor-pointer">+ Add</button>
+                      <button type="button" onClick={() => handleDeleteHistory()} className="h-[20px] px-2 text-[10px] font-medium bg-white hover:bg-slate-100 text-rose-600 border border-slate-300 rounded shadow-2xs transition-colors cursor-pointer">Delete</button>
+                      <button type="button" onClick={handleMoveHistoryUp} className="h-[20px] px-2 text-[10px] font-medium bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded shadow-2xs transition-colors cursor-pointer">Up ∧</button>
+                      <button type="button" onClick={handleMoveHistoryDown} className="h-[20px] px-2 text-[10px] font-medium bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded shadow-2xs transition-colors cursor-pointer">Down ∨</button>
+                      <CollapseBtn sectionKey="patientHistory" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('patientHistory') && (
+                    <div className="bg-white overflow-x-auto">
+                      <table className="w-full text-[11px] text-left border-collapse">
+                        <thead>
+                          <tr className="bg-gradient-to-r from-emerald-50 to-teal-50/60 text-slate-700 border-b border-slate-200">
+                            <th className="px-2 py-1.5 w-8 font-semibold text-center text-slate-500">#</th>
+                            <th className="px-2 py-1.5 w-36 font-semibold text-slate-700">Start / Stop Date</th>
+                            <th className="px-2 py-1.5 w-64 font-semibold text-slate-700">Condition / Verbatim / Indication/Reaction</th>
+                            <th className="px-2 py-1.5 font-semibold text-slate-700">SOC / HLGT / PT</th>
+                            <th className="px-2 py-1.5 w-64 font-semibold text-slate-700">Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {patientHistories.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="text-center py-6 text-gray-400 italic">No history records. Click "+ Add" above to create one.</td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {(form.followUps || []).map((item, idx) => (
-                              <tr key={item.id} className={idx % 2 === 0 ? "bg-slate-50" : "bg-white"}>
-                                <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200 text-center align-middle font-bold text-gray-800">
-                                  <label className="flex items-center justify-center cursor-pointer gap-1 text-[10px]">
-                                    <input type="checkbox" className="w-2.5 h-2.5"
-                                      checked={selectedFollowUps.includes(item.id)}
-                                      onChange={(e) => {
-                                        if (e.target.checked) setSelectedFollowUps([...selectedFollowUps, item.id]);
-                                        else setSelectedFollowUps(selectedFollowUps.filter(id => id !== item.id));
-                                      }}
+                          ) : (
+                            patientHistories.map((hist, index) => (
+                              <tr 
+                                key={hist.id} 
+                                onClick={() => setSelectedHistoryId(hist.id)}
+                                className={cn(
+                                  "cursor-pointer transition-colors",
+                                  selectedHistoryId === hist.id ? "bg-teal-50/60 ring-1 ring-inset ring-teal-400" : (index % 2 === 0 ? "bg-white" : "bg-slate-50/50")
+                                )}
+                              >
+                                <td className="px-2 py-2 align-top text-center text-rose-600 font-bold">{index + 1}.</td>
+                                <td className="px-2 py-2 align-top space-y-1.5">
+                                  <div>
+                                    <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider block mb-0.5">Start Date</span>
+                                    <input 
+                                      type="date"
+                                      className={cn(inp, "w-full text-[11px]")} 
+                                      value={hist.startDate || ''} 
+                                      onChange={(e) => updateHistory(hist.id, 'startDate', e.target.value)} 
                                     />
-                                    {idx + 1}
+                                  </div>
+                                  <div>
+                                    <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider block mb-0.5">Stop Date</span>
+                                    <input 
+                                      type="date"
+                                      className={cn(inp, "w-full text-[11px]", hist.ongoing && "bg-gray-100 text-gray-400 cursor-not-allowed")} 
+                                      value={hist.stopDate || ''} 
+                                      onChange={(e) => updateHistory(hist.id, 'stopDate', e.target.value)} 
+                                      disabled={hist.ongoing}
+                                    />
+                                  </div>
+                                  <label className="flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer pt-0.5 select-none">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={!!hist.ongoing} 
+                                      onChange={(e) => updateHistory(hist.id, 'ongoing', e.target.checked)} 
+                                      className="w-3.5 h-3.5 rounded text-teal-600 focus:ring-teal-500" 
+                                    /> 
+                                    Ongoing
                                   </label>
                                 </td>
-                                <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200">
-                                  <input className={cn(inp, "h-[16px] w-[80px]")} value={item.followUpReceived} onChange={(e) => updateFollowUp(item.id, 'followUpReceived', e.target.value)} />
-                                </td>
-                                <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200">
-                                  <input className={cn(inp, "h-[16px] w-[70px]")} value={item.safetyReceived} onChange={(e) => updateFollowUp(item.id, 'safetyReceived', e.target.value)} />
-                                </td>
-                                <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200 text-center">
-                                  <input type="checkbox" className="w-3 h-3" checked={item.significant} onChange={(e) => updateFollowUp(item.id, 'significant', e.target.checked)} />
-                                </td>
-                                <td className="px-1 py-1 border-b border-slate-200 border-r border-slate-200 text-center">
-                                  <input type="checkbox" className="w-3 h-3" checked={item.dataCleanUp} onChange={(e) => updateFollowUp(item.id, 'dataCleanUp', e.target.checked)} />
-                                </td>
-                                <td className="px-1 py-1 border-b border-slate-200">
-                                  <div className="flex items-center gap-1">
-                                    <input className={cn(inp, "h-[16px] flex-1 bg-slate-50")} value={item.justification} readOnly />
+                                <td className="px-2 py-2 align-top space-y-1.5">
+                                  {/* Option 1: Condition */}
+                                  <div>
+                                    <input 
+                                      className={cn(inp, "w-full text-[11px]")} 
+                                      placeholder="Condition"
+                                      value={hist.condition !== undefined && hist.condition !== null ? hist.condition : (hist.conditionType || '')} 
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, condition: val, conditionType: val } : h));
+                                      }} 
+                                    />
+                                  </div>
+                                  {/* Option 2: Verbatim */}
+                                  <div>
+                                    <input 
+                                      className={cn(inp, "w-full text-[11px]")} 
+                                      placeholder="Verbatim"
+                                      value={hist.verbatim || ''} 
+                                      onChange={(e) => updateHistory(hist.id, 'verbatim', e.target.value)} 
+                                    />
+                                  </div>
+                                  {/* Option 3: Indication/Reaction (HAS ENCODE BUTTON) */}
+                                  <div className="flex gap-1.5 items-center">
+                                    <input 
+                                      className={cn(inp, "flex-1 text-[11px]")} 
+                                      placeholder="Indication/Reaction"
+                                      value={hist.reaction || hist.indication || ''} 
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, reaction: val, indication: val } : h));
+                                      }} 
+                                    />
                                     <button 
-                                      onClick={() => openJustificationModal(item.id, item.justification)}
-                                      className="w-3 h-3 rounded-full bg-green-500 border border-green-700 shadow-sm shrink-0"
-                                      title="Add Justification"
-                                    ></button>
+                                      type="button" 
+                                      onClick={() => openIcdBrowser('patientHistory', hist.id, hist.reaction || hist.indication || hist.verbatim || hist.condition || '')}
+                                      className="h-[24px] px-2 text-[10px] font-medium bg-teal-600 hover:bg-teal-700 text-white rounded transition-colors shadow-2xs flex items-center gap-1 cursor-pointer shrink-0"
+                                      title="Encode in MedDRA / ICD Browser"
+                                    >
+                                      <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                                      Encode
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="px-2 py-2 align-top space-y-1.5">
+                                  {/* Box 1: SOC */}
+                                  <div className="flex gap-1 items-center">
+                                    <input 
+                                      className={cn(inp, "flex-1 bg-slate-50 text-[11px]")} 
+                                      placeholder="SOC"
+                                      value={hist.soc !== undefined && hist.soc !== null ? hist.soc : (hist.codedPt || '')} 
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, soc: val, codedPt: val } : h));
+                                      }} 
+                                    />
+                                    <button 
+                                      type="button" 
+                                      onClick={() => {
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, soc: '', codedPt: '' } : h));
+                                      }} 
+                                      className="h-[24px] w-[24px] border border-rose-200 text-rose-500 hover:bg-rose-50 rounded flex items-center justify-center font-bold text-[11px] shrink-0 transition-colors cursor-pointer"
+                                      title="Clear SOC"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  {/* Box 2: HLGT */}
+                                  <div className="flex gap-1 items-center">
+                                    <input 
+                                      className={cn(inp, "flex-1 bg-slate-50 text-[11px]")} 
+                                      placeholder="HLGT"
+                                      value={hist.hlgt !== undefined && hist.hlgt !== null ? hist.hlgt : (hist.llt || '')} 
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, hlgt: val, llt: val } : h));
+                                      }} 
+                                    />
+                                    <button 
+                                      type="button" 
+                                      onClick={() => {
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, hlgt: '', llt: '' } : h));
+                                      }} 
+                                      className="h-[24px] w-[24px] border border-rose-200 text-rose-500 hover:bg-rose-50 rounded flex items-center justify-center font-bold text-[11px] shrink-0 transition-colors cursor-pointer"
+                                      title="Clear HLGT"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  {/* Box 3: PT */}
+                                  <div className="flex gap-1 items-center">
+                                    <input 
+                                      className={cn(inp, "flex-1 bg-slate-50 text-[11px]")} 
+                                      placeholder="PT"
+                                      value={hist.pt !== undefined && hist.pt !== null ? hist.pt : (hist.reactionPt || '')} 
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, pt: val, reactionPt: val } : h));
+                                      }} 
+                                    />
+                                    <button 
+                                      type="button" 
+                                      onClick={() => {
+                                        setPatientHistories(prev => prev.map(h => h.id === hist.id ? { ...h, pt: '', reactionPt: '' } : h));
+                                      }} 
+                                      className="h-[24px] w-[24px] border border-rose-200 text-rose-500 hover:bg-rose-50 rounded flex items-center justify-center font-bold text-[11px] shrink-0 transition-colors cursor-pointer"
+                                      title="Clear PT"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="px-2 py-2 align-top relative">
+                                  <textarea 
+                                    className={cn(inp, "w-full h-[76px] resize-none pr-6 text-[11px]")} 
+                                    placeholder="History / clinical notes..."
+                                    value={hist.notes || ''} 
+                                    onChange={(e) => updateHistory(hist.id, 'notes', e.target.value)} 
+                                  />
+                                  <div className="absolute top-3 right-3 flex gap-1 text-slate-400 hover:text-slate-600 cursor-pointer" title="Expand Notes">
+                                    <span className="text-[12px]">👓</span>
                                   </div>
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Case Classification Table */}
-                  <div className="pt-2 h-full">
-                    <div className="border border-gray-300 h-full flex flex-col bg-white overflow-hidden">
-                      <div className="flex-1 overflow-y-auto">
-                        <table className="w-full text-left text-[10px]">
-                          <thead className="sticky top-0 bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800">
-                            <tr className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-emerald-100">
-                              <th className="px-1 py-0.5 w-12 text-center font-normal border-r border-emerald-100">#</th>
-                              <th className="px-1 py-0.5 font-bold flex justify-between items-center">
-                                Classification
-                                <div className="flex gap-0.5">
-                                  <button onClick={handleAddClassification} className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 shadow-sm leading-none">Add</button>
-                                  <button onClick={handleDeleteClassification} className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 shadow-sm leading-none">Delete</button>
-                                </div>
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(form.caseClassifications || []).map((item, idx) => (
-                              <tr key={item.id} className={idx % 2 === 0 ? "bg-slate-50" : "bg-white"}>
-                                <td className="px-1 py-1 border-b border-gray-300 border-r border-slate-200 text-center align-top pt-[5px]">
-                                  <label className="flex items-center justify-center cursor-pointer gap-1 text-gray-700 font-normal text-[10px]">
-                                    <input type="checkbox" className="w-2.5 h-2.5" 
-                                      checked={selectedClasses.includes(item.id)}
-                                      onChange={(e) => {
-                                        if (e.target.checked) setSelectedClasses([...selectedClasses, item.id]);
-                                        else setSelectedClasses(selectedClasses.filter(id => id !== item.id));
-                                      }}
-                                    />
-                                    {idx + 1}.
-                                  </label>
-                                </td>
-                                <td className="px-1 py-1 border-b border-gray-300">
-                                  <input 
-                                    className="h-[18px] border border-slate-200 px-1 text-[11px] bg-white focus:outline-none focus:border-blue-500 w-full"
-                                    value={item.text}
-                                    onChange={(e) => {
-                                      const newClasses = [...form.caseClassifications];
-                                      const index = newClasses.findIndex(c => c.id === item.id);
-                                      if (index !== -1) {
-                                        newClasses[index].text = e.target.value;
-                                        setForm(p => ({ ...p, caseClassifications: newClasses }));
-                                      }
-                                    }}
-                                  />
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ======== Study Information ======== */}
-              <div className="border border-slate-200 rounded-sm overflow-hidden shadow-sm">
-                <div className={secHeader}>
-                  <div className="flex items-center gap-2">Study Information <button className="h-[16px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 font-normal hover:bg-gray-200 flex items-center gap-1 shadow-sm"><span className="text-amber-500">📂</span> Select</button></div>
-                  <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                </div>
-                <div className="p-2 bg-white">
-                  <div className="grid grid-cols-4 gap-2 mb-1">
-                    <div><label className={lbl}>Project ID</label><input className={inp} value={form.projectId} onChange={h('projectId')} /></div>
-                    <div><label className={lbl}>Study ID</label><input className={inp} value={form.studyId} onChange={h('studyId')} /></div>
-                    <div><label className={lbl}>Center ID</label><input className={inp} value={form.centerId} onChange={h('centerId')} /></div>
-                    <div><label className={lbl}>Study Phase</label><input className={inp} value={form.studyPhase} onChange={h('studyPhase')} /></div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 mb-1">
-                    <div className="col-span-1"><label className={lbl}>Study Name</label><input className={inp} value={form.studyName} onChange={h('studyName')} /></div>
-                    <div><label className={lbl}>Other ID</label><input className={inp} value={form.otherId} onChange={h('otherId')} /></div>
-                    <div><label className={lbl}>Study Type</label><select className={cn(sel, "bg-gray-100 text-gray-500")} disabled value={form.studyType}><option>{form.studyType}</option></select></div>
-                    <div><label className={lbl}>Blinding Status</label><select className={sel} value={form.blindingStatus} onChange={h('blindingStatus')}><option>{form.blindingStatus}</option></select></div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2">
-                    <div className="col-span-2 row-span-2 flex flex-col">
-                      <label className={lbl}>Study Description</label>
-                      <textarea className={cn(inp, "h-full min-h-[46px] resize-none leading-tight py-1 bg-white")} value={form.studyDescription} onChange={h('studyDescription')} />
-                    </div>
-                    <div><label className={lbl}>Unblinding Date</label><input type="date" className={inp} value={form.unblindingDate} onChange={h('unblindingDate')} /></div>
-                    <div className="flex gap-2">
-                      <div className="flex-1"><label className={lbl}>Week #</label><input className={inp} value={form.weekNum} onChange={h('weekNum')} /></div>
-                      <div className="flex-1"><label className={lbl}>Visit #</label><input className={inp} value={form.visitNum} onChange={h('visitNum')} /></div>
-                    </div>
-                    <div className="col-start-3 col-span-2 mt-[-20px]"><label className={lbl}>Observe Study Type</label><select className={sel} value={form.observeStudyType} onChange={h('observeStudyType')}><option>{form.observeStudyType}</option></select></div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ======== Reporter Information ======== */}
-              <div className="border border-slate-200 rounded-sm overflow-hidden shadow-sm">
-                <div className={secHeader}>
-                  <div className="flex items-center gap-2">Reporter Information (1) <button className="h-[16px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 font-normal hover:bg-gray-200 flex items-center gap-1 shadow-sm"><span className="text-amber-500">📂</span> Select</button></div>
-                  <div className="flex items-center gap-2">
-                    
-                    <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                  </div>
-                </div>
-                <div className="p-2 bg-white">
-                  <div className="flex gap-4">
-                    <div className="flex-1 space-y-1">
-                      {/* Row 1 */}
-                      <div className="flex gap-2">
-                        <div className="w-10"><label className={lbl}>Sal.</label><input className={inp} value={activeReporter.sal || ''} onChange={(e) => updateActiveReporter('sal', e.target.value)} /></div>
-                        <div className="flex-1"><label className={lbl}>First Name</label><input className={inp} value={activeReporter.firstName || ''} onChange={(e) => updateActiveReporter('firstName', e.target.value)} /></div>
-                        <div className="w-16"><label className={lbl}>Middle Name</label><input className={inp} value={activeReporter.middleName || ''} onChange={(e) => updateActiveReporter('middleName', e.target.value)} /></div>
-                        <div className="flex-1"><label className={lbl}>Last Name</label><input className={inp} value={activeReporter.lastName || ''} onChange={(e) => updateActiveReporter('lastName', e.target.value)} /></div>
-                        <div className="w-12"><label className={lbl}>Suffix</label><input className={inp} value={activeReporter.suffix || ''} onChange={(e) => updateActiveReporter('suffix', e.target.value)} /></div>
-                        <div className="w-32"><label className={lbl}>Health Care Professional</label><select className={sel} value={activeReporter.hcp || ''} onChange={(e) => updateActiveReporter('hcp', e.target.value)}><option></option><option>Yes</option><option>No</option><option>Unk</option></select></div>
-                        <div className="w-32"><label className={lbl}>Occupation</label><input className={inp} value={activeReporter.occupation || ''} onChange={(e) => updateActiveReporter('occupation', e.target.value)} /></div>
-                      </div>
-                      {/* Row 2 */}
-                      <div className="flex gap-2">
-                        <div className="w-1/2 pr-2">
-                          <label className={lbl}>Address</label>
-                          <textarea className={cn(inp, "h-[62px] resize-none w-full")} value={activeReporter.address || ''} onChange={(e) => updateActiveReporter('address', e.target.value)} />
-                        </div>
-                        <div className="w-1/2 space-y-1">
-                          <div className="grid grid-cols-2 gap-2">
-                            <div><label className={lbl}>Institution</label><input className={inp} value={activeReporter.institution || ''} onChange={(e) => updateActiveReporter('institution', e.target.value)} /></div>
-                            <div><label className={lbl}>Department</label><input className={inp} value={activeReporter.department || ''} onChange={(e) => updateActiveReporter('department', e.target.value)} /></div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div><label className={lbl}>City</label><input className={inp} value={activeReporter.city || ''} onChange={(e) => updateActiveReporter('city', e.target.value)} /></div>
-                            <div><label className={lbl}>State/Province</label><input className={inp} value={activeReporter.state || ''} onChange={(e) => updateActiveReporter('state', e.target.value)} /></div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div><label className={lbl}>Postal Code</label><input className={inp} value={activeReporter.postalCode || ''} onChange={(e) => updateActiveReporter('postalCode', e.target.value)} /></div>
-                            <div><label className={lbl}>Country</label><input className={inp} value={activeReporter.country || ''} onChange={(e) => updateActiveReporter('country', e.target.value)} /></div>
-                          </div>
-                        </div>
-                      </div>
-                      {/* Row 3 */}
-                      <div className="grid grid-cols-4 gap-2">
-                        <div><label className={lbl}>Phone Number</label><input className={inp} value={activeReporter.phone || ''} onChange={(e) => updateActiveReporter('phone', e.target.value)} /></div>
-                        <div><label className={lbl}>Alternate Phone</label><input className={inp} value={activeReporter.altPhone || ''} onChange={(e) => updateActiveReporter('altPhone', e.target.value)} /></div>
-                        <div><label className={lbl}>FAX Number</label><input className={inp} value={activeReporter.fax || ''} onChange={(e) => updateActiveReporter('fax', e.target.value)} /></div>
-                        <div><label className={lbl}>Reporter ID</label><input className={inp} value={activeReporter.reporterId || ''} onChange={(e) => updateActiveReporter('reporterId', e.target.value)} /></div>
-                      </div>
-                      {/* Row 4 */}
-                      <div className="grid grid-cols-4 gap-2">
-                        <div className="col-span-2"><label className={lbl}>Email Address</label><input className={inp} value={activeReporter.email || ''} onChange={(e) => updateActiveReporter('email', e.target.value)} /></div>
-                        <div><label className={lbl}>Reporter Type</label><input className={inp} value={activeReporter.reporterType || ''} onChange={(e) => updateActiveReporter('reporterType', e.target.value)} /></div>
-                        <div><label className={lbl}>Reporter's Reference #</label><input className={inp} value={activeReporter.reporterRef || ''} onChange={(e) => updateActiveReporter('reporterRef', e.target.value)} /></div>
-                      </div>
-                      {/* Row 5 */}
-                      <div className="grid grid-cols-4 gap-2">
-                        <div className="col-start-3"><label className={lbl}>Report Media</label><input className={inp} value={activeReporter.reportMedia || ''} onChange={(e) => updateActiveReporter('reportMedia', e.target.value)} /></div>
-                        <div><label className={lbl}>Intermediary</label><input className={inp} value={activeReporter.intermediary || ''} onChange={(e) => updateActiveReporter('intermediary', e.target.value)} /></div>
-                      </div>
-                    </div>
-
-                    {/* Right side checkboxes */}
-                    <div className="w-48 pt-4 pl-2 border-l border-gray-300">
-                      <div className="text-[10px] font-bold text-gray-800 mb-2 leading-tight">Report Sent to Regulatory Authority by Reporter?</div>
-                      <div className="space-y-1 text-[10px] text-gray-800 font-semibold">
-                        <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={activeReporter.protectConfidentiality || false} onChange={(e) => updateActiveReporter('protectConfidentiality', e.target.checked)} className="w-3 h-3" /> Protect Confidentiality</label>
-                        <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={activeReporter.primaryReporter || false} onChange={(e) => updateActiveReporter('primaryReporter', e.target.checked)} className="w-3 h-3" /> Primary Reporter</label>
-                        <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={activeReporter.correspondenceContact || false} onChange={(e) => updateActiveReporter('correspondenceContact', e.target.checked)} className="w-3 h-3" /> Correspondence Contact</label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Inner Tabs for Reporter */}
-                  <div className="mt-2 flex gap-1 border-b border-gray-300 items-end">
-                    {reporterTabs.map((tab, index) => (
-                      <div 
-                        key={tab.id}
-                        className={cn("px-3 py-0.5 text-[9px] font-bold border border-gray-400 border-b-0 rounded-t-sm shadow-sm flex items-center cursor-pointer gap-1", activeReporterTab === tab.id ? "bg-emerald-100 text-emerald-800 border-emerald-300 z-10 translate-y-[1px]" : "bg-slate-100 text-slate-500 hover:bg-slate-200/60")}
-                        onClick={() => setActiveReporterTab(tab.id)}
-                      >
-                        {(() => {
-                          if (!tab.lastName && !tab.firstName) return `Reporter ${index + 1}`;
-                          const namePart = [tab.lastName ? tab.lastName.toUpperCase() : '', tab.firstName].filter(Boolean).join(', ');
-                          const typePart = tab.reporterType ? ` (${tab.reporterType.substring(0,3)}...)` : '';
-                          return `${namePart}${typePart}`;
-                        })()}
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteReporterTab(tab.id);
-                          }}
-                          className={cn("w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors", activeReporterTab === tab.id ? "text-emerald-900" : "text-gray-500")}
-                          title="Delete Reporter"
-                        >✕</button>
-                      </div>
-                    ))}
-                    <div 
-                      className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm cursor-pointer hover:bg-gray-100 flex items-center shadow-sm"
-                      onClick={() => {
-                        const newId = Date.now();
-                        setReporterTabs(p => [...p, { id: newId, backendId: null, sal: '', firstName: '', middleName: '', lastName: '', suffix: '', hcp: '', occupation: '', address: '', institution: '', department: '', city: '', state: '', postalCode: '', country: '', phone: '', altPhone: '', fax: '', reporterId: '', reporterRef: '', email: '', reporterType: '', reportMedia: '', intermediary: '', protectConfidentiality: false, primaryReporter: false, correspondenceContact: false }]);
-                        setActiveReporterTab(newId);
-                      }}
-                    >
-                      (New)
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {activeTab === 'Patient' && activeSubTab === 'Patient' && (
-            <>
-              {/* ======== Patient Information ======== */}
-              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>
-                  <span>Patient Information</span>
-                  <div className="flex items-center gap-1">
-                    <button className="h-6 px-2.5 text-[10px] font-medium bg-white text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Patient Info From Reporter</button>
-                    <button className="h-6 px-2.5 text-[10px] font-medium bg-white text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Current Medical Status</button>
-                    <button className="h-6 px-2.5 text-[10px] font-medium bg-white text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Patient Death Info</button>
-                    
-                    <button className="w-3 h-3 ml-1 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                  </div>
-                </div>
-                <div className="p-2 bg-white grid grid-cols-2 gap-4">
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                    <div><label className={lbl}>Sponsor Identifier</label><input className={inp} value={form.sponsorIdentifier} onChange={h('sponsorIdentifier')} /></div>
-                    <div><label className={lbl}>Pat. ID</label><input className={inp} value={form.patId} onChange={h('patId')} /></div>
-                    <div><label className={lbl}>First Name</label><input className={inp} value={form.patFirstName} onChange={h('patFirstName')} /></div>
-                    <div className="flex gap-2">
-                      <div className="flex-1"><label className={lbl}>Last Name</label><input className={inp} value={form.patLastName} onChange={h('patLastName')} /></div>
-                      <div className="w-12"><label className={lbl}>Initials</label><input className={inp} value={form.patInitials} onChange={h('patInitials')} /></div>
-                    </div>
-                    <div className="col-span-2 pr-1">
-                      <label className={lbl}>Address</label>
-                      <textarea className={cn(inp, "h-[44px] resize-none")} value={form.patAddress} onChange={h('patAddress')} />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-1 content-start">
-                    <div><label className={lbl}>Randomization #</label><input className={inp} value={form.randomizationNum} onChange={h('randomizationNum')} /></div>
-                    <div className="row-span-2 flex flex-col justify-end gap-1 pl-2 mb-1">
-                      <label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.patProtectConfidentiality} onChange={hc('patProtectConfidentiality')} className="w-3 h-3" /> Protect Confidentiality</label>
-                      <label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.childOnlyCase} onChange={hc('childOnlyCase')} className="w-3 h-3" /> Child Only Case</label>
-                    </div>
-                    <div className="col-start-1 mt-6"><label className={lbl}>Patient City</label><input className={inp} value={form.patCity} onChange={h('patCity')} /></div>
-                    <div className="col-start-2 mt-6"><label className={lbl}>Country</label><input className={inp} value={form.patCountry} onChange={h('patCountry')} /></div>
-                    <div><label className={lbl}>State/Province</label><input className={inp} value={form.patState} onChange={h('patState')} /></div>
-                    <div><label className={lbl}>Postal Code</label><input className={inp} value={form.patPostalCode} onChange={h('patPostalCode')} /></div>
-                    <div className="col-start-2"><label className={lbl}>Phone Number</label><input className={inp} value={form.patPhone} onChange={h('patPhone')} /></div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ======== Patient Details ======== */}
-              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>
-                  <span>Patient Details</span>
-                  <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                </div>
-                <div className="p-2 bg-white">
-                  <div className="flex gap-2">
-                    <div className="w-24"><label className={lbl}>Date of Birth</label><input type="date" className={inp} value={form.patDob} onChange={h('patDob')} /></div>
-                    <div className="w-12"><label className={lbl}>Age</label><input className={inp} value={form.patAge} onChange={h('patAge')} /></div>
-                    <div className="w-20"><label className={lbl}>Units</label><input className={inp} value={form.patAgeUnits} onChange={h('patAgeUnits')} /></div>
-                    <div className="w-32"><label className={lbl}>Age Group</label><input className={cn(inp, "bg-slate-50")} value={form.patAgeGroup} onChange={h('patAgeGroup')} /></div>
-                    <div className="w-32"><label className={lbl}>Ethnicity</label><input className={inp} value={form.patEthnicity} onChange={h('patEthnicity')} /></div>
-                    <div className="w-32"><label className={lbl}>Occupation</label><input className={inp} value={form.patOccupation} onChange={h('patOccupation')} /></div>
-                    <div className="w-20"><label className={lbl}>Weight</label><div className="flex gap-0.5"><input className={inp} value={form.patWeight} onChange={h('patWeight')} /><input className={cn(inp, "w-10 bg-gray-50")} value={form.patWeightUnits} onChange={h('patWeightUnits')} /></div></div>
-                    <div className="w-20"><label className={lbl}>Height</label><div className="flex gap-0.5"><input className={inp} value={form.patHeight} onChange={h('patHeight')} /><input className={cn(inp, "w-10 bg-gray-50")} value={form.patHeightUnits} onChange={h('patHeightUnits')} /></div></div>
-                  </div>
-                  <div className="flex gap-2 mt-1">
-                    <div className="w-24"><label className={lbl}>Gender</label><select className={sel} value={form.patGender} onChange={handlePatGenderChange}><option>Male</option><option>Female</option><option>Unknown</option></select></div>
-                    <div className="w-24"><label className={lbl}>Pregnant</label><select className={cn(sel, form.patGender === 'Male' && "bg-gray-100 text-gray-500")} value={form.patPregnant} onChange={h('patPregnant')} disabled={form.patGender === 'Male'}><option></option><option>Yes</option><option>No</option><option>Unk</option></select></div>
-                    <div className="w-32 ml-44"><label className={lbl}>Date of LMP</label><input type="date" className={cn(inp, form.patGender === 'Male' && "bg-gray-100 text-gray-500")} value={form.patDateOfLmp} onChange={h('patDateOfLmp')} disabled={form.patGender === 'Male'} /></div>
-                    <div className="flex items-end mb-1"><label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.patBreastfeeding} onChange={hc('patBreastfeeding')} className="w-3 h-3" /> Breastfeeding</label></div>
-                  </div>
-                </div>
-              </div>
-
-              {form.patPregnant === 'Yes' && (
-                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden mb-2 mt-2">
-                  {/* ======== Pregnancy Information ======== */}
-                  <div className={secHeader}>
-                    <span>Pregnancy Information</span>
-                    <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                  </div>
-                  <div className="p-1 bg-white">
-                    <div className="border border-gray-300 p-2 bg-white">
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <div className="grid grid-cols-3 gap-2 mb-1">
-                            <div><label className={lbl}>Due Date</label><input type="date" className={inp} value={form.dueDate} onChange={h('dueDate')} /></div>
-                            <div><label className={lbl}>Weeks at Onset</label><input className={inp} value={form.weeksAtOnset} onChange={h('weeksAtOnset')} /></div>
-                            <div><label className={lbl}>Weeks at Exposure</label><input className={inp} value={form.weeksAtExposure} onChange={h('weeksAtExposure')} /></div>
-                          </div>
-                          <div className="flex gap-4 mt-2">
-                            <div className="w-32"><label className={lbl}>Number of Fetus</label><input className={inp} value={form.numOfFetus} onChange={h('numOfFetus')} /></div>
-                            <div className="flex items-end pb-1 gap-4">
-                              <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="radio" name="pective" checked={form.prospective} onChange={() => setForm(p=>({...p, prospective:true, retrospective:false}))} className="w-3 h-3" /> Prospective</label>
-                              <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="radio" name="pective" checked={form.retrospective} onChange={() => setForm(p=>({...p, prospective:false, retrospective:true}))} className="w-3 h-3" /> Retrospective</label>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="w-[200px] border border-gray-300 p-1">
-                          <label className={lbl}>Trimester of Exposure</label>
-                          <div className="space-y-1 mt-1 pl-1">
-                            <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="checkbox" checked={form.trimesterFirst} onChange={hc('trimesterFirst')} className="w-3 h-3" /> First</label>
-                            <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="checkbox" checked={form.trimesterSecond} onChange={hc('trimesterSecond')} className="w-3 h-3" /> Second</label>
-                            <label className="flex items-center gap-1 text-[10px] font-normal text-gray-800"><input type="checkbox" checked={form.trimesterThird} onChange={hc('trimesterThird')} className="w-3 h-3" /> Third</label>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="border-[2px] border-slate-200 p-1 mt-2 mb-1">
-                        <div className="grid grid-cols-5 gap-2 mb-1">
-                          <div className="col-span-1"><label className={lbl}>Delivery Date</label><input type="date" className={inp} value={form.deliveryDate} onChange={h('deliveryDate')} /></div>
-                          <div className="col-span-1">
-                            <label className={lbl}>Weight</label>
-                            <div className="flex gap-1">
-                              <input className={cn(inp, "flex-1")} value={form.deliveryWeight} onChange={h('deliveryWeight')} />
-                              <select className={cn(sel, "w-8 bg-gray-100")}><option></option></select>
-                            </div>
-                          </div>
-                          <div className="col-span-1"><label className={lbl}>APGAR Score #1</label><input className={inp} value={form.apgar1} onChange={h('apgar1')} /></div>
-                          <div className="col-span-1"><label className={lbl}>APGAR Score #2</label><input className={inp} value={form.apgar2} onChange={h('apgar2')} /></div>
-                          <div className="col-span-1"><label className={lbl}>APGAR Score #3</label><input className={inp} value={form.apgar3} onChange={h('apgar3')} /></div>
-                        </div>
-                        <div className="flex gap-2">
-                          <div className="w-[40%]"><label className={lbl}>Delivery Type</label><input className={inp} value={form.deliveryType} onChange={h('deliveryType')} /></div>
-                          <div className="flex-1"><label className={lbl}>Delivery Notes</label><input className={inp} value={form.deliveryNotes} onChange={h('deliveryNotes')} /></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ======== Other Relevant History (0) ======== */}
-              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>
-                  <span>Other Relevant History (0)</span>
-                  <div className="flex items-center gap-1">
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Copy</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Add</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Delete</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Up ∧</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Down ∨</button>
-                    <button className="w-3 h-3 ml-1 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">∧</button>
-                  </div>
-                </div>
-                <div className="bg-white">
-                  <table className="w-full text-[10px] text-left">
-                    <thead>
-                      <tr className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-gray-300">
-                        <th className="px-1 py-0.5 w-4 font-normal">#</th>
-                        <th className="px-1 py-0.5 w-24 font-normal">Start / Stop Date</th>
-                        <th className="px-1 py-0.5 w-48 font-normal">Condition Type / Verbatim / Indication /<br/>Reaction</th>
-                        <th className="px-1 py-0.5 font-normal">Coded PT / Description of condition LLT /<br/>Indication PT / Reaction PT</th>
-                        <th className="px-1 py-0.5 w-48 font-normal">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[1, 2].map((num) => (
-                        <tr key={num} className={num % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                          <td className="px-1 py-1 align-top border-b border-gray-300 text-red-600 font-bold">{num}.</td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300 space-y-1">
-                            <input className={inp} defaultValue="" />
-                            <input className={inp} defaultValue="" />
-                            <label className="flex items-center gap-1 font-semibold text-gray-700 mt-1"><input type="checkbox" className="w-3 h-3" /> Ongoing</label>
-                          </td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300">
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
-                            </div>
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
-                            </div>
-                            <div className="flex gap-1">
-                              <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
-                            </div>
-                          </td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300">
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
-                            </div>
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
-                            </div>
-                            <div className="flex gap-1">
-                              <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
-                            </div>
-                          </td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300 relative">
-                            <textarea className={cn(inp, "w-full h-[62px] resize-none")} />
-                            <div className="absolute top-1 right-2 flex gap-1">
-                              
-                              <span className="text-[12px]">👓</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* ======== Lab Data (4) ======== */}
-              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>
-                  <span>Lab Data (4)</span>
-                  <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                </div>
-                <div className="bg-slate-50 p-1 grid grid-cols-[200px_1fr] gap-1">
-                  {/* Left Column (Tests) */}
-                  <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 p-1 space-y-1">
-                    <div className="grid grid-cols-[1fr_auto] gap-x-2 gap-y-1 mb-2 items-center">
-                      <span className="text-[10px] font-bold text-gray-900 leading-tight">Lab Data Test as<br/>Reported</span>
-                      <button onClick={handleAddLabTest} className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200">Add Test</button>
-                      
-                      <span className="text-[10px] font-bold text-gray-900 col-span-2">Test Name</span>
-                      
-                      <span className="text-[10px] font-bold text-gray-900">Units</span>
-                      <button className="h-[18px] px-1 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200">Select Lab Test Group</button>
-                      
-                      <span className="text-[10px] font-bold text-gray-900 col-span-2">Norm Low / Norm High</span>
-                    </div>
-                    
-                    <div className="flex justify-end mt-4 mb-2">
-                      <div className="bg-white px-6 py-0.5 text-[10px] font-bold text-gray-900">Date</div>
-                    </div>
-                    
-                    {/* Dynamic Tests */}
-                    {labTests.map(test => (
-                      <div key={test.id} className="mt-2 space-y-1">
-                        <div className="flex justify-end pr-1">
-                          <button onClick={() => openIcdBrowser('lab', test.id, test.name || test.reported)} className="h-[16px] px-2 text-[9px] bg-gray-100 border border-gray-400 text-gray-600 hover:bg-gray-200">Encode</button>
-                        </div>
-                        <div className="flex gap-0.5">
-                          <input className={cn(inp, "flex-1 h-[18px]")} value={test.reported} onChange={(e) => updateLabTest(test.id, 'reported', e.target.value)} />
-                          <button onClick={() => openIcdBrowser('lab', test.id, test.reported)} className="w-5 h-[18px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] hover:bg-gray-200">🔍</button>
-                        </div>
-                        <div className="flex gap-0.5">
-                          <input 
-                            className={cn(inp, "flex-1 h-[18px]", test.encoded && "bg-slate-50")} 
-                            value={test.name} 
-                            onChange={(e) => {
-                              updateLabTest(test.id, 'name', e.target.value);
-                              updateLabTest(test.id, 'encoded', false);
-                            }} 
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                openIcdBrowser('lab', test.id, test.name);
-                              }
-                            }}
-                          />
-                          {test.encoded ? (
-                            <span className="w-5 h-[18px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] text-green-600 font-bold">✓</span>
-                          ) : (
-                            <button className="w-5 h-[18px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] text-red-600 font-bold pb-0.5 hover:bg-gray-200" onClick={() => removeLabTest(test.id)}>❌</button>
+                            ))
                           )}
-                        </div>
-                        <input className={cn(inp, "w-full h-[18px]")} value={test.units} onChange={(e) => updateLabTest(test.id, 'units', e.target.value)} />
-                        <div className="flex gap-1">
-                          <input className={cn(inp, "w-1/2 h-[18px]")} value={test.low} onChange={(e) => updateLabTest(test.id, 'low', e.target.value)} />
-                          <input className={cn(inp, "w-1/2 h-[18px]")} value={test.high} onChange={(e) => updateLabTest(test.id, 'high', e.target.value)} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  
-                  {/* Right Column (Results) */}
-                  <div className="bg-white p-1 overflow-x-auto">
-                    <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 mb-2 items-start">
-                      <div className="flex flex-col text-[10px] font-bold text-gray-800 leading-[14px]">
-                        <span>Results / Units</span>
-                        <span>Assessment</span>
-                        <span>Notes</span>
-                      </div>
-                      <button onClick={handleAddDate} className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200 self-start mt-0.5">Add Date</button>
+                        </tbody>
+                      </table>
                     </div>
-                    
-                    <div className="flex gap-4">
-                      {labDates.map((dateObj, colIndex) => (
-                        <div key={dateObj.id} className="w-[180px] flex flex-col">
-                          <div className="mt-4 mb-2">
-                            <input 
-                              className={cn(inp, "h-[18px] w-full")} 
-                              value={dateObj.date}
-                              onChange={(e) => updateLabDate(dateObj.id, e.target.value)}
-                            />
+                  )}
+                </div>
+
+                {/* ======== Lab Data ======== */}
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                  <div className={cn(secHeader, isCollapsed('labData') && "border-b-0")}>
+                    <span>Lab Data ({labTests.length})</span>
+                    <CollapseBtn sectionKey="labData" />
+                  </div>
+                  {!isCollapsed('labData') && (
+                    <div className="bg-slate-50 p-1 grid grid-cols-[200px_1fr] gap-1">
+                      {/* Left Column (Tests) */}
+                      <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 p-1 space-y-1">
+                        <div className="grid grid-cols-[1fr_auto] gap-x-2 gap-y-1 mb-1 items-center">
+                          <span className="text-[10px] font-bold text-gray-900 leading-tight">Lab Data Test as<br />Reported</span>
+                          <button type="button" onClick={handleAddLabTest} className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Add Test</button>
+
+                          <span className="text-[10px] font-bold text-gray-900 col-span-2">Test Name</span>
+
+                          <span className="text-[10px] font-bold text-gray-900">Units</span>
+                          <button type="button" className="h-[18px] px-1 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Select Lab Test Group</button>
+
+                          <span className="text-[10px] font-bold text-gray-900 col-span-2">Norm Low / Norm High</span>
+                        </div>
+
+                        <div className="flex justify-end mt-2 mb-1">
+                          <div className="bg-white px-5 py-0.5 text-[10px] font-bold text-gray-900 border border-gray-200 shadow-sm">Date</div>
+                        </div>
+
+                        {/* Dynamic Tests */}
+                        {labTests.map(test => (
+                          <div key={test.id} className="space-y-1 pt-1 pb-2 border-b border-gray-200 last:border-b-0">
+                            <div className="flex justify-end">
+                              <button type="button" className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Encode</button>
+                            </div>
+                            <div className="flex gap-1 items-center">
+                              <input 
+                                className={cn(inp, "flex-1 h-[20px] text-[10px]")} 
+                                value={test.reported || ''} 
+                                onChange={(e) => updateLabTest(test.id, 'reported', e.target.value)} 
+                              />
+                              <button type="button" className="w-[20px] h-[20px] border border-gray-300 bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-[10px]">🔍</button>
+                            </div>
+                            <div className="flex gap-1 items-center">
+                              <input 
+                                className={cn(inp, "flex-1 h-[20px] text-[10px]")} 
+                                value={test.name || ''} 
+                                onChange={(e) => updateLabTest(test.id, 'name', e.target.value)} 
+                              />
+                              <button 
+                                type="button" 
+                                onClick={() => handleDeleteLabTest(test.id)} 
+                                className="w-[20px] h-[20px] border border-red-500 text-red-500 font-bold bg-white text-[11px] leading-none hover:bg-red-50 cursor-pointer"
+                              >
+                                X
+                              </button>
+                            </div>
+                            <div className="w-full">
+                              <input 
+                                className={cn(inp, "w-full h-[20px] text-[10px]")} 
+                                value={test.units || ''} 
+                                onChange={(e) => updateLabTest(test.id, 'units', e.target.value)} 
+                              />
+                            </div>
+                            <div className="flex gap-1">
+                              <input 
+                                className={cn(inp, "w-1/2 h-[20px] text-[10px]")} 
+                                value={test.low || ''} 
+                                onChange={(e) => updateLabTest(test.id, 'low', e.target.value)} 
+                                placeholder="Low" 
+                              />
+                              <input 
+                                className={cn(inp, "w-1/2 h-[20px] text-[10px]")} 
+                                value={test.high || ''} 
+                                onChange={(e) => updateLabTest(test.id, 'high', e.target.value)} 
+                                placeholder="High" 
+                              />
+                            </div>
                           </div>
-                          
-                          {/* Results aligned with Tests */}
-                          {labTests.map((test, i) => (
-                            <div key={`res-${dateObj.id}-${test.id}`} className="mt-2 space-y-1">
-                              <div className="flex gap-1">
-                                <input className={cn(inp, "flex-1 h-[18px]")} defaultValue="" />
-                                <input className={cn(inp, "w-[40px] h-[18px]")} defaultValue="" />
+                        ))}
+                      </div>
+
+                      {/* Right Column (Results / Dates) */}
+                      <div className="flex flex-col bg-white border border-gray-300 overflow-hidden">
+                        {/* Top Bar matching Screenshot 1 */}
+                        <div className="flex items-center gap-2 p-1 border-b border-gray-300 bg-white">
+                          <div className="w-[90px] shrink-0 text-[10px] font-bold text-gray-800 leading-tight">
+                            <div>Results / Units</div>
+                            <div>Assessment</div>
+                            <div>Notes</div>
+                          </div>
+                          <div className="flex-1">
+                            <button 
+                              type="button" 
+                              onClick={handleAddDate} 
+                              className="w-full h-[20px] text-[10px] font-medium bg-slate-100 hover:bg-slate-200 border border-gray-300 flex items-center justify-center text-gray-800 cursor-pointer shadow-sm"
+                            >
+                              Add Date
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Date Columns matching Screenshot 1 */}
+                        <div className="flex gap-2 overflow-x-auto p-1.5 min-h-[220px]">
+                          {labDates.map((dateCol, cIdx) => (
+                            <div key={dateCol.id} className="w-[200px] shrink-0 space-y-1">
+                              {/* Date Row */}
+                              <div className="flex items-center gap-1.5 mb-2">
+                                {cIdx === 0 && <span className="text-[10px] font-bold text-gray-700 w-8">Date</span>}
+                                <input 
+                                  type="date" 
+                                  className={cn(inp, "flex-1 h-[20px] text-[10px] px-1 bg-white")} 
+                                  value={dateCol.date || ''} 
+                                  onChange={(e) => updateLabDate(dateCol.id, e.target.value)} 
+                                />
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleDeleteLabDate(dateCol.id)} 
+                                  className="w-[18px] h-[18px] text-[10px] text-red-500 hover:text-red-700 font-bold leading-none cursor-pointer border border-red-200 hover:border-red-400 bg-white rounded-xs"
+                                  title="Remove Date Column"
+                                >
+                                  ✕
+                                </button>
                               </div>
-                              <input className={cn(inp, "w-full h-[18px]")} />
-                              <div className="flex gap-1 h-[62px]">
-                                <textarea className={cn(inp, "flex-1 h-full resize-none")} />
-                                <div className="flex flex-col justify-between w-[20px] pb-1 pt-0.5">
-                                  <span className="text-[14px] leading-none cursor-pointer drop-shadow-sm">🔬</span>
-                                  <span className="text-[12px] leading-none text-purple-600 font-bold tracking-[-1px] cursor-pointer drop-shadow-sm ml-0.5">⇦⇨</span>
-                                </div>
-                              </div>
+
+                              {/* Test values for this date column */}
+                              {labTests.map(test => {
+                                const resKey = `${dateCol.id}_${test.id}`;
+                                const result = labResults[resKey] || { value: '', unit: '', assessment: '', notes: '' };
+                                return (
+                                  <div key={resKey} className="space-y-1 pt-1 pb-2 border-b border-gray-100 last:border-b-0">
+                                    {/* Value / Unit Row */}
+                                    <div className="flex items-center gap-1">
+                                      {cIdx === 0 && <span className="text-[10px] font-bold text-gray-700 w-8">Value</span>}
+                                      <input 
+                                        className={cn(inp, "flex-1 h-[20px] text-[10px]")} 
+                                        value={result.value || ''} 
+                                        onChange={(e) => updateLabResult(dateCol.id, test.id, 'value', e.target.value)} 
+                                      />
+                                      <span className="text-[10px] font-bold text-gray-700">Unit</span>
+                                      <input 
+                                        className={cn(inp, "w-12 h-[20px] text-[10px]")} 
+                                        value={result.unit || ''} 
+                                        onChange={(e) => updateLabResult(dateCol.id, test.id, 'unit', e.target.value)} 
+                                      />
+                                    </div>
+
+                                    {/* Assessment Row */}
+                                    <div className="flex items-center gap-1">
+                                      {cIdx === 0 && <span className="text-[10px] font-bold text-gray-700 w-8">Assessment</span>}
+                                      <input 
+                                        className={cn(inp, "flex-1 h-[20px] text-[10px]")} 
+                                        value={result.assessment || ''} 
+                                        onChange={(e) => updateLabResult(dateCol.id, test.id, 'assessment', e.target.value)} 
+                                      />
+                                    </div>
+
+                                    {/* Notes Row */}
+                                    <div className="flex items-start gap-1">
+                                      {cIdx === 0 && <span className="text-[10px] font-bold text-gray-700 w-8 pt-1">Notes</span>}
+                                      <div className="flex-1 relative">
+                                        <textarea 
+                                          className={cn(inp, "w-full h-[58px] text-[10px] resize-none pr-6")} 
+                                          value={result.notes || ''} 
+                                          onChange={(e) => updateLabResult(dateCol.id, test.id, 'notes', e.target.value)} 
+                                        />
+                                        <div className="absolute right-1 top-1 flex flex-col items-center gap-1">
+                                          <span className="text-[13px] leading-none cursor-pointer" title="Laboratory icon">🔬</span>
+                                          <span className="text-[11px] leading-none text-purple-600 font-bold cursor-pointer" title="Expand">⇦⇨</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           ))}
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
 
-          {activeTab === 'Patient' && activeSubTab === 'Parent' && (
-            <>
-              {/* ======== Parent Information ======== */}
-              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>Parent Information</div>
-                <div className="p-2 bg-white">
-                  <div className="flex gap-2 mb-2">
-                    <div className="w-20"><label className={lbl}>Parent Initials</label><input className={inp} value={form.parentInitials} onChange={h('parentInitials')} /></div>
-                    <div className="w-24"><label className={lbl}>Date of Birth</label><input type="date" className={inp} value={form.parentDob} onChange={h('parentDob')} /></div>
-                    <div className="w-12"><label className={lbl}>Age</label><input className={inp} value={form.parentAge} onChange={h('parentAge')} /></div>
-                    <div className="w-20"><label className={lbl}>Units</label><input className={inp} value={form.parentAgeUnits} onChange={h('parentAgeUnits')} /></div>
-                    <div className="w-24"><label className={lbl}>Gender</label><select className={sel} value={form.parentGender} onChange={h('parentGender')}><option>Male</option><option>Female</option><option>Unknown</option></select></div>
-                    <div className="w-24"><label className={lbl}>Date of LMP</label><input type="date" className={inp} value={form.parentDateOfLmp} onChange={h('parentDateOfLmp')} /></div>
-                    <div className="w-16"><label className={lbl}>Weight</label><input className={inp} value={form.parentWeight} onChange={h('parentWeight')} /></div>
-                    <div className="w-16"><label className={lbl}>Height</label><input className={inp} value={form.parentHeight} onChange={h('parentHeight')} /></div>
-                    <div className="flex items-end mb-1"><label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.parentBreastfeeding} onChange={hc('parentBreastfeeding')} className="w-3 h-3" /> Parent Breastfeeding</label></div>
-                  </div>
-                  <div>
-                    <label className={lbl}>Medical History</label>
-                    <div className="relative">
-                      <textarea className={cn(inp, "w-full h-[36px] resize-none")} value={form.parentMedicalHistory} onChange={h('parentMedicalHistory')} />
-                      <div className="absolute top-1 right-2"><span className="text-[12px]">👓</span></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-
-
-              {/* ======== Other Relevant History (0) ======== */}
-              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                <div className={secHeader}>
-                  <span>Other Relevant History (0)</span>
-                  <div className="flex items-center gap-1">
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Copy</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Add</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Delete</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Up ∧</button>
-                    <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Down ∨</button>
-                    <button className="w-3 h-3 ml-1 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">∧</button>
-                  </div>
-                </div>
-                <div className="bg-white">
-                  <table className="w-full text-[10px] text-left">
-                    <thead>
-                      <tr className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-gray-300">
-                        <th className="px-1 py-0.5 w-4 font-normal">#</th>
-                        <th className="px-1 py-0.5 w-24 font-normal">Start / Stop Date</th>
-                        <th className="px-1 py-0.5 w-48 font-normal">Condition Type / Verbatim / Indication /<br/>Reaction</th>
-                        <th className="px-1 py-0.5 font-normal">Coded PT / Description of condition LLT /<br/>Indication PT / Reaction PT</th>
-                        <th className="px-1 py-0.5 w-48 font-normal">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[1, 2].map((num) => (
-                        <tr key={num} className={num % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                          <td className="px-1 py-1 align-top border-b border-gray-300 text-red-600 font-bold">{num}.</td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300 space-y-1">
-                            <input className={inp} defaultValue="" />
-                            <input className={inp} defaultValue="" />
-                            <label className="flex items-center gap-1 font-semibold text-gray-700 mt-1"><input type="checkbox" className="w-3 h-3" /> Ongoing</label>
-                          </td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300">
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
-                            </div>
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
-                            </div>
-                            <div className="flex gap-1">
-                              <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
-                            </div>
-                          </td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300">
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
-                            </div>
-                            <div className="flex gap-1 mb-1">
-                              <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
-                            </div>
-                            <div className="flex gap-1">
-                              <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
-                            </div>
-                          </td>
-                          <td className="px-1 py-1 align-top border-b border-gray-300 relative">
-                            <textarea className={cn(inp, "w-full h-[62px] resize-none")} />
-                            <div className="absolute top-1 right-2 flex gap-1">
-                              
-                              <span className="text-[12px]">👓</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-            </>
-          )}
-
-          {activeTab === 'Products' && (
-            <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden min-h-full">
-              <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200 flex items-center gap-2 shadow-inner">
-                <span className="text-gray-800">Drug</span>
-              </div>
-              <div className="p-1.5 space-y-2">
-
-                {/* ======== Product Information ======== */}
+            {activeTab === 'Patient' && activeSubTab === 'Parent' && (
+              <>
+                {/* ======== Parent Information ======== */}
                 <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                  <div className={secHeader}>
-                    <span>Product Information</span>
+                  <div className={cn(secHeader, isCollapsed('parentInfo') && "border-b-0")}>
+                    <span>Parent Information</span>
+                    <CollapseBtn sectionKey="parentInfo" />
+                  </div>
+                  {!isCollapsed('parentInfo') && (
+                    <div className="p-2 bg-white">
+                      <div className="flex gap-2 mb-2">
+                        <div className="w-20"><label className={lbl}>Parent Initials</label><input className={inp} value={form.parentInitials} onChange={h('parentInitials')} /></div>
+                        <div className="w-24"><label className={lbl}>Date of Birth</label><input type="date" className={inp} value={form.parentDob} onChange={h('parentDob')} /></div>
+                        <div className="w-12"><label className={lbl}>Age</label><input className={inp} value={form.parentAge} onChange={h('parentAge')} /></div>
+                        <div className="w-20"><label className={lbl}>Units</label><input className={inp} value={form.parentAgeUnits} onChange={h('parentAgeUnits')} /></div>
+                        <div className="w-24"><label className={lbl}>Gender</label><select className={sel} value={form.parentGender} onChange={h('parentGender')}><option>Male</option><option>Female</option><option>Unknown</option></select></div>
+                        <div className="w-24"><label className={lbl}>Date of LMP</label><input type="date" className={inp} value={form.parentDateOfLmp} onChange={h('parentDateOfLmp')} /></div>
+                        <div className="w-16"><label className={lbl}>Weight</label><input className={inp} value={form.parentWeight} onChange={h('parentWeight')} /></div>
+                        <div className="w-16"><label className={lbl}>Height</label><input className={inp} value={form.parentHeight} onChange={h('parentHeight')} /></div>
+                        <div className="flex items-end mb-1"><label className="flex items-center gap-1 cursor-pointer text-[10px] font-semibold text-gray-700"><input type="checkbox" checked={form.parentBreastfeeding} onChange={hc('parentBreastfeeding')} className="w-3 h-3" /> Parent Breastfeeding</label></div>
+                      </div>
+                      <div>
+                        <label className={lbl}>Medical History</label>
+                        <div className="relative">
+                          <textarea className={cn(inp, "w-full h-[36px] resize-none")} value={form.parentMedicalHistory} onChange={h('parentMedicalHistory')} />
+                          <div className="absolute top-1 right-2"><span className="text-[12px]">👓</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ======== Other Relevant History (0) ======== */}
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                  <div className={cn(secHeader, isCollapsed('parentHistory') && "border-b-0")}>
+                    <span>Other Relevant History (0)</span>
                     <div className="flex items-center gap-1">
-                      <button className="w-3 h-3 ml-1 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
+                      <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Copy</button>
+                      <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Add</button>
+                      <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Delete</button>
+                      <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Up ∧</button>
+                      <button className="h-[16px] px-2 text-[9px] font-normal bg-gray-100 text-black border border-gray-400">Down ∨</button>
+                      <CollapseBtn sectionKey="parentHistory" className="ml-1" />
                     </div>
                   </div>
-                  <div className="p-2 bg-white space-y-2">
-                    <div className="flex gap-4 items-center">
-                      <div className="flex-1 max-w-sm"><label className={lbl}>Product Name</label>
-                          <DrugAutocomplete
-                            value={activeProduct.name || activeProduct.genericName || ''}
-                            onChange={(val) => updateActiveProduct('name', typeof val === 'object' ? val.target.value : val)}
-                          onSelect={(drug) => {
-                            updateActiveProductFields({
-                              name: drug.brand || drug.generic || '',
-                              genericName: drug.generic || '',
-                              formulation: drug.form || '',
-                              obtainCountry: '',
-                              authCountry: '',
-                              ndc: drug.ndc || '',
-                              labeler: drug.labeler || '',
-                              route: drug.route || '',
-                              pharmClass: drug.pharm || '',
-                              activeIngredients: drug.active || '',
-                              concentration: drug.conc || '',
-                              units: drug.unit || ''
-                            });
-                          }}
-                          placeholder="Search drug / brand name…"
-                        />
-
-                      </div>
-                      <div className="flex items-center gap-4 mt-3">
-                        <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="radio" name="productRole" checked={activeProduct.role === 'Suspect'} onChange={() => updateActiveProduct('role', 'Suspect')} className="w-3 h-3" /> Suspect</label>
-                        <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="radio" name="productRole" checked={activeProduct.role === 'Concomitant'} onChange={() => updateActiveProduct('role', 'Concomitant')} className="w-3 h-3" /> Concomitant</label>
-                        <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="radio" name="productRole" checked={activeProduct.role === 'Treatment'} onChange={() => updateActiveProduct('role', 'Treatment')} className="w-3 h-3" /> Treatment</label>
-                      </div>
-                    </div>
-                    <div><label className={lbl}>Generic Name</label><input className={inp} value={activeProduct.genericName || ''} onChange={(e) => updateActiveProduct('genericName', e.target.value)} /></div>
-                    <div className="grid grid-cols-4 gap-2">
-                      <div><label className={lbl}>Company Drug Code</label><input className={inp} value={activeProduct.companyDrugCode || ''} onChange={(e) => updateActiveProduct('companyDrugCode', e.target.value)} /></div>
-                      <div><label className={lbl}>Obtain Drug Country</label><input className={inp} value={activeProduct.obtainCountry || ''} onChange={(e) => updateActiveProduct('obtainCountry', e.target.value)} /></div>
-                      <div><label className={lbl}>Drug Code</label><input className={inp} value={activeProduct.ndc || ''} onChange={(e) => updateActiveProduct('ndc', e.target.value)} /></div>
-                      <div><label className={lbl}>WHO Medicinal Product ID</label><input className={inp} value={activeProduct.whoId || ''} onChange={(e) => updateActiveProduct('whoId', e.target.value)} /></div>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      <div><label className={lbl}>Formulation</label><input className={inp} value={activeProduct.formulation || ''} onChange={(e) => updateActiveProduct('formulation', e.target.value)} /></div>
-                      <div><label className={lbl}>Route of Administration</label><input className={inp} value={activeProduct.route || ''} onChange={(e) => updateActiveProduct('route', e.target.value)} /></div>
-                      <div><label className={lbl}>Drug Authorization Country</label><input className={inp} value={activeProduct.authCountry || ''} onChange={(e) => updateActiveProduct('authCountry', e.target.value)} /></div>
-                      <div className="col-span-2"><label className={lbl}>Manufacturer / Labeler</label><input className={inp} value={activeProduct.labeler || ''} onChange={(e) => updateActiveProduct('labeler', e.target.value)} /></div>
-                    </div>
-                    <div className="grid grid-cols-6 gap-2">
-                      <div><label className={lbl}>Concentration</label><input className={inp} value={activeProduct.concentration || ''} onChange={(e) => updateActiveProduct('concentration', e.target.value)} /></div>
-                      <div><label className={lbl}>Units</label><input className={inp} value={activeProduct.units || ''} onChange={(e) => updateActiveProduct('units', e.target.value)} /></div>
-                      <div><label className={lbl}>Interaction?</label><select className={sel} value={activeProduct.interaction || ''} onChange={(e) => updateActiveProduct('interaction', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="Unknown">Unknown</option></select></div>
-                      <div><label className={lbl}>Contraindicated?</label><select className={sel} value={activeProduct.contraindicated || ''} onChange={(e) => updateActiveProduct('contraindicated', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="Unknown">Unknown</option></select></div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* ======== Product Indication ======== */}
-                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                  <div className={secHeader}>
-                    <span>Product Indication ({productIndications.length})</span>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => {
-                        if (activeIndicationId) {
-                          const activeInd = productIndications.find(i => i.id === activeIndicationId);
-                          openIcdBrowser('indication', activeIndicationId, activeInd?.reported);
-                        } else {
-                          alert('Please select a product indication row first.');
-                        }
-                      }} className="h-5 px-2.5 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center gap-1">🪄 Encode</button>
-                      <button onClick={handleAddProductIndication} className="h-5 px-2.5 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center gap-1">➕ Add</button>
-                      <button onClick={handleDeleteProductIndication} className="h-5 px-2.5 rounded-sm text-[10px] font-medium bg-white text-red-600 border border-slate-300 hover:bg-red-50 shadow-sm transition-all flex items-center gap-1">🗑️ Delete</button>
-                      <div className="flex gap-0.5 ml-1">
-                        <button onClick={() => scrollIndications('up')} className="h-5 px-2 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center justify-center">▲</button>
-                        <button onClick={() => scrollIndications('down')} className="h-5 px-2 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center justify-center">▼</button>
-                      </div>
-                      <button className="w-4 h-4 ml-2 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded text-[10px] flex items-center justify-center font-bold border border-slate-300 shadow-sm transition-all">−</button>
-                    </div>
-                  </div>
-                  <div className="bg-white">
-                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-gray-300 flex text-[10px]">
-                      <div className="px-1 py-0.5 w-[30px] font-normal">#</div>
-                      <div className="px-1 py-0.5 flex-1 font-normal">Reported Indication</div>
-                      <div className="px-1 py-0.5 flex-1 font-normal">Coded Indication</div>
-                    </div>
-                    <div ref={indicationsScrollRef} className="max-h-[70px] overflow-y-auto">
-                      <table className="w-full text-[10px] text-left table-fixed">
+                  {!isCollapsed('parentHistory') && (
+                    <div className="bg-white">
+                      <table className="w-full text-[10px] text-left">
+                        <thead>
+                          <tr className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-gray-300">
+                            <th className="px-1 py-0.5 w-4 font-normal">#</th>
+                            <th className="px-1 py-0.5 w-24 font-normal">Start / Stop Date</th>
+                            <th className="px-1 py-0.5 w-48 font-normal">Condition Type / Verbatim / Indication /<br />Reaction</th>
+                            <th className="px-1 py-0.5 font-normal">Coded PT / Description of condition LLT /<br />Indication PT / Reaction PT</th>
+                            <th className="px-1 py-0.5 w-48 font-normal">Notes</th>
+                          </tr>
+                        </thead>
                         <tbody>
-                          {productIndications.map((ind, index) => (
-                            <tr 
-                              key={ind.id} 
-                              onClick={() => setActiveIndicationId(ind.id)}
-                              className={cn(
-                                "cursor-pointer",
-                                activeIndicationId === ind.id ? "bg-white" : (index % 2 === 0 ? "bg-white" : "bg-slate-50")
-                              )}
-                            >
-                              <td className="px-1 py-1 align-middle border-b border-gray-300 text-red-600 font-bold w-[30px]">{index + 1}.</td>
-                              <td className="px-1 py-1 align-middle border-b border-gray-300">
-                                <div className="flex gap-1 relative">
-                                  <input 
-                                    className={cn(inp, "flex-1")} 
-                                    value={ind.reported}
-                                    onChange={(e) => setProductIndications(p => p.map(item => item.id === ind.id ? { ...item, reported: e.target.value } : item))}
-                                  />
-                                  
+                          {[1, 2].map((num) => (
+                            <tr key={num} className={num % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                              <td className="px-1 py-1 align-top border-b border-gray-300 text-red-600 font-bold">{num}.</td>
+                              <td className="px-1 py-1 align-top border-b border-gray-300 space-y-1">
+                                <input className={inp} defaultValue="" />
+                                <input className={inp} defaultValue="" />
+                                <label className="flex items-center gap-1 font-semibold text-gray-700 mt-1"><input type="checkbox" className="w-3 h-3" /> Ongoing</label>
+                              </td>
+                              <td className="px-1 py-1 align-top border-b border-gray-300">
+                                <div className="flex gap-1 mb-1">
+                                  <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
+                                </div>
+                                <div className="flex gap-1 mb-1">
+                                  <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
+                                </div>
+                                <div className="flex gap-1">
+                                  <input className={cn(inp, "flex-1")} /><button className="h-[20px] px-1 text-[9px] border border-gray-300 bg-gray-100 text-gray-400" disabled>Encode</button>
                                 </div>
                               </td>
-                              <td className="px-1 py-1 align-middle border-b border-gray-300">
+                              <td className="px-1 py-1 align-top border-b border-gray-300">
+                                <div className="flex gap-1 mb-1">
+                                  <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
+                                </div>
+                                <div className="flex gap-1 mb-1">
+                                  <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
+                                </div>
                                 <div className="flex gap-1">
-                                  <input 
-                                    className={cn(inp, "flex-1", ind.coded ? "bg-slate-50" : "")} 
-                                    value={ind.coded}
-                                    onChange={(e) => setProductIndications(p => p.map(item => item.id === ind.id ? { ...item, coded: e.target.value } : item))}
-                                  />
-                                  <button onClick={() => { setProductIndications(p => p.filter(item => item.id !== ind.id)); if (activeIndicationId === ind.id) setActiveIndicationId(null); }} className="h-[20px] w-[20px] border border-red-500 text-red-500 hover:bg-red-50 transition-colors font-bold bg-white leading-none">X</button>
+                                  <input className={cn(inp, "flex-1 bg-slate-50")} /><button className="h-[20px] w-[20px] border border-red-500 text-red-500 font-bold bg-white leading-none">X</button>
+                                </div>
+                              </td>
+                              <td className="px-1 py-1 align-top border-b border-gray-300 relative">
+                                <textarea className={cn(inp, "w-full h-[62px] resize-none")} />
+                                <div className="absolute top-1 right-2 flex gap-1">
+                                  <span className="text-[12px]">👓</span>
                                 </div>
                               </td>
                             </tr>
@@ -2260,1767 +2976,2097 @@ export default function CaseDetailPage() {
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  )}
                 </div>
+              </>
+            )}
 
-                {/* ======== Dosage Regimens (1) ======== */}
-                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                  <div className={secHeader}>
-                    <span>Dosage Regimens (1)</span>
-                    <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
-                  </div>
-                  <div className="p-2 bg-white space-y-2">
-                    <div className="grid grid-cols-6 gap-2 items-start">
-                      <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen.startDate} onChange={(e) => updateDosageTab(activeDosageTab, 'startDate', e.target.value)} /></div>
-                      <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen.stopDate} onChange={(e) => updateDosageTab(activeDosageTab, 'stopDate', e.target.value)} /></div>
-                      <div className="flex flex-col gap-1 mt-3">
-                        <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={activeRegimen.ongoing} onChange={(e) => updateDosageTab(activeDosageTab, 'ongoing', e.target.checked)} /> Ongoing</label>
-                        <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={activeRegimen.outsideRange} onChange={(e) => updateDosageTab(activeDosageTab, 'outsideRange', e.target.checked)} /> Outside Therapeutic Range</label>
-                      </div>
-                      <div><label className={lbl}>Duration of Regimen</label><input className={inp} value={activeRegimen.duration} onChange={(e) => updateDosageTab(activeDosageTab, 'duration', e.target.value)} /></div>
-                      <div><label className={lbl}>Dose Number</label><input className={inp} value={activeRegimen.doseNumber} onChange={(e) => updateDosageTab(activeDosageTab, 'doseNumber', e.target.value)} /></div>
-                      <div className="flex gap-1">
-                        <div className="flex-1"><label className={lbl}>Dose</label><input className={inp} value={activeRegimen.dose} onChange={(e) => updateDosageTab(activeDosageTab, 'dose', e.target.value)} /></div>
-                        <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.doseUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'doseUnits', e.target.value)} /></div>
-                        <div className="flex-1"><label className={lbl}>Frequency</label><input className={inp} value={activeRegimen.frequency} onChange={(e) => updateDosageTab(activeDosageTab, 'frequency', e.target.value)} /></div>
+            {activeTab === 'Products' && (
+              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden min-h-full">
+                <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200 flex items-center gap-2 shadow-inner">
+                  <span className="text-gray-800">Drug</span>
+                </div>
+                <div className="p-1.5 space-y-2">
+
+                  {/* ======== Product Information ======== */}
+                  <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                    <div className={cn(secHeader, isCollapsed('productInfo') && "border-b-0")}>
+                      <span>Product Information</span>
+                      <div className="flex items-center gap-1">
+                        <CollapseBtn sectionKey="productInfo" className="ml-1" />
                       </div>
                     </div>
-                    <div className="grid grid-cols-6 gap-2">
-                      <div><label className={lbl}>Dose Description</label><input className={inp} value={activeRegimen.doseDescription} onChange={(e) => updateDosageTab(activeDosageTab, 'doseDescription', e.target.value)} /></div>
-                      <div className="flex gap-1">
-                        <div className="flex-1"><label className={lbl}>Daily Dosage</label><input className={inp} value={activeRegimen.dailyDosage} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosage', e.target.value)} /></div>
-                        <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.dailyDosageUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosageUnits', e.target.value)} /></div>
-                      </div>
-                      <div className="flex gap-1">
-                        <div className="flex-1"><label className={lbl}>Regimen Dosage</label><input className={inp} value={activeRegimen.regimenDosage} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosage', e.target.value)} /></div>
-                        <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.regimenDosageUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosageUnits', e.target.value)} /></div>
-                      </div>
-                      <div className="col-span-1"><label className={lbl}>Patient Route of Administration</label><input className={inp} value={activeRegimen.patientRoute} onChange={(e) => updateDosageTab(activeDosageTab, 'patientRoute', e.target.value)} /></div>
-                      <div className="col-span-2"><label className={lbl}>Parent Route of Administration</label><input className={inp} value={activeRegimen.parentRoute} onChange={(e) => updateDosageTab(activeDosageTab, 'parentRoute', e.target.value)} /></div>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      <div><label className={lbl}>Accidental Exposure</label><input className={inp} value={activeRegimen.accidentalExposure} onChange={(e) => updateDosageTab(activeDosageTab, 'accidentalExposure', e.target.value)} /></div>
-                      <div><label className={lbl}>Package ID</label><input className={inp} value={activeRegimen.packageId} onChange={(e) => updateDosageTab(activeDosageTab, 'packageId', e.target.value)} /></div>
-                      <div className="flex gap-2 col-span-2">
-                        <div className="flex-1"><label className={lbl}>Batch / Lot #</label><input className={inp} value={activeRegimen.batchLot} onChange={(e) => updateDosageTab(activeDosageTab, 'batchLot', e.target.value)} /></div>
-                        <div className="flex-1"><label className={lbl}>Expiration Date</label><input type="date" className={inp} value={activeRegimen.expirationDate} onChange={(e) => updateDosageTab(activeDosageTab, 'expirationDate', e.target.value)} /></div>
-                      </div>
-                    </div>
-                    
-                    {/* Inner Tabs for Dosage */}
-                    <div className="mt-2 flex gap-1 border-b border-slate-200 pb-0.5 overflow-x-auto">
-                      {dosageTabs.map(tab => (
-                        <div 
-                          key={tab.id}
-                          onClick={() => setActiveDosageTab(tab.id)}
-                          className={cn(
-                            "px-4 py-0.5 text-[9px] font-bold border border-gray-400 border-b-0 rounded-t-sm shadow-sm flex items-center relative z-10 cursor-pointer whitespace-nowrap min-w-[80px]",
-                            activeDosageTab === tab.id 
-                              ? "bg-white text-gray-700 translate-y-[2px]" 
-                              : "bg-gray-100 text-gray-500 hover:bg-gray-50"
-                          )}
-                        >
-                          <span className="text-amber-500 absolute left-2 text-[10px]">💊</span>
-                          <span className="ml-3 truncate">{tab.name}</span>
-                          {dosageTabs.length > 1 && (
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setDosageTabs(p => p.filter(t => t.id !== tab.id)); 
-                                if (activeDosageTab === tab.id) setActiveDosageTab(dosageTabs[0].id); 
-                              }} 
-                              className="ml-2 text-gray-400 hover:text-red-500"
-                            >×</button>
-                          )}
+                    {!isCollapsed('productInfo') && (
+                      <div className="p-2 bg-white space-y-2">
+                        <div className="flex gap-4 items-center">
+                          <div className="flex-1 max-w-sm"><label className={lbl}>Product Name</label>
+                            <DrugAutocomplete
+                              value={activeProduct.name || activeProduct.genericName || ''}
+                              onChange={(val) => updateActiveProduct('name', typeof val === 'object' ? val.target.value : val)}
+                              onSelect={(drug) => {
+                                updateActiveProductFields({
+                                  name: drug.brand || drug.generic || '',
+                                  genericName: drug.generic || '',
+                                  formulation: drug.form || '',
+                                  obtainCountry: '',
+                                  authCountry: '',
+                                  ndc: drug.ndc || '',
+                                  labeler: drug.labeler || '',
+                                  route: drug.route || '',
+                                  pharmClass: drug.pharm || '',
+                                  activeIngredients: drug.active || '',
+                                  concentration: drug.conc || '',
+                                  units: drug.unit || ''
+                                });
+                              }}
+                              placeholder="Search drug / brand name…"
+                            />
+
+                          </div>
+                          <div className="flex items-center gap-4 mt-3">
+                            <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="radio" name="productRole" checked={activeProduct.role === 'Suspect'} onChange={() => updateActiveProduct('role', 'Suspect')} className="w-3 h-3" /> Suspect</label>
+                            <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="radio" name="productRole" checked={activeProduct.role === 'Concomitant'} onChange={() => updateActiveProduct('role', 'Concomitant')} className="w-3 h-3" /> Concomitant</label>
+                            <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="radio" name="productRole" checked={activeProduct.role === 'Treatment'} onChange={() => updateActiveProduct('role', 'Treatment')} className="w-3 h-3" /> Treatment</label>
+                          </div>
                         </div>
-                      ))}
-                      <div onClick={() => { 
-                        const newId = Date.now(); 
-                        setDosageTabs(p => [...p, { 
-                          id: newId, 
-                          name: 'New Regimen',
-                          startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
-                          doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
-                          dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
-                          patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
-                        }]); 
-                        setActiveDosageTab(newId); 
-                      }} className="px-4 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm hover:bg-gray-50 cursor-pointer whitespace-nowrap">(New)</div>
-                      <div className="ml-auto flex gap-1 items-end sticky right-0 bg-white pl-2">
-                        <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
-                        <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
+                        <div><label className={lbl}>Generic Name</label><input className={inp} value={activeProduct.genericName || ''} onChange={(e) => updateActiveProduct('genericName', e.target.value)} /></div>
+                        <div className="grid grid-cols-4 gap-2">
+                          <div><label className={lbl}>Company Drug Code</label><input className={inp} value={activeProduct.companyDrugCode || ''} onChange={(e) => updateActiveProduct('companyDrugCode', e.target.value)} /></div>
+                          <div><label className={lbl}>Obtain Drug Country</label><input list="all-countries-list" className={inp} value={activeProduct.obtainCountry || ''} onChange={(e) => updateActiveProduct('obtainCountry', e.target.value)} /></div>
+                          <div><label className={lbl}>Drug Code</label><input className={inp} value={activeProduct.ndc || ''} onChange={(e) => updateActiveProduct('ndc', e.target.value)} /></div>
+                          <div><label className={lbl}>WHO Medicinal Product ID</label><input className={inp} value={activeProduct.whoId || ''} onChange={(e) => updateActiveProduct('whoId', e.target.value)} /></div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          <div><label className={lbl}>Formulation</label><input className={inp} value={activeProduct.formulation || ''} onChange={(e) => updateActiveProduct('formulation', e.target.value)} /></div>
+                          <div><label className={lbl}>Route of Administration</label><input className={inp} value={activeProduct.route || ''} onChange={(e) => updateActiveProduct('route', e.target.value)} /></div>
+                          <div><label className={lbl}>Drug Authorization Country</label><input list="all-countries-list" className={inp} value={activeProduct.authCountry || ''} onChange={(e) => updateActiveProduct('authCountry', e.target.value)} /></div>
+                          <div className="col-span-2"><label className={lbl}>Manufacturer / Labeler</label><input className={inp} value={activeProduct.labeler || ''} onChange={(e) => updateActiveProduct('labeler', e.target.value)} /></div>
+                        </div>
+                        <div className="grid grid-cols-6 gap-2">
+                          <div><label className={lbl}>Concentration</label><input className={inp} value={activeProduct.concentration || ''} onChange={(e) => updateActiveProduct('concentration', e.target.value)} /></div>
+                          <div><label className={lbl}>Units</label><input className={inp} value={activeProduct.units || ''} onChange={(e) => updateActiveProduct('units', e.target.value)} /></div>
+                          <div><label className={lbl}>Interaction?</label><select className={sel} value={activeProduct.interaction || ''} onChange={(e) => updateActiveProduct('interaction', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="Unknown">Unknown</option></select></div>
+                          <div><label className={lbl}>Contraindicated?</label><select className={sel} value={activeProduct.contraindicated || ''} onChange={(e) => updateActiveProduct('contraindicated', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="Unknown">Unknown</option></select></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ======== Product Indication ======== */}
+                  <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                    <div className={cn(secHeader, isCollapsed('productIndications') && "border-b-0")}>
+                      <span>Product Indication ({productIndications.length})</span>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => {
+                          if (activeIndicationId) {
+                            const activeInd = productIndications.find(i => i.id === activeIndicationId);
+                            openIcdBrowser('indication', activeIndicationId, activeInd?.reported);
+                          } else {
+                            alert('Please select a product indication row first.');
+                          }
+                        }} className="h-5 px-2.5 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center gap-1">🪄 Encode</button>
+                        <button onClick={handleAddProductIndication} className="h-5 px-2.5 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center gap-1">➕ Add</button>
+                        <button onClick={handleDeleteProductIndication} className="h-5 px-2.5 rounded-sm text-[10px] font-medium bg-white text-red-600 border border-slate-300 hover:bg-red-50 shadow-sm transition-all flex items-center gap-1">🗑️ Delete</button>
+                        <div className="flex gap-0.5 ml-1">
+                          <button onClick={() => scrollIndications('up')} className="h-5 px-2 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center justify-center">▲</button>
+                          <button onClick={() => scrollIndications('down')} className="h-5 px-2 rounded-sm text-[10px] font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm transition-all flex items-center justify-center">▼</button>
+                        </div>
+                        <CollapseBtn sectionKey="productIndications" className="ml-2" />
                       </div>
                     </div>
-                  </div>
-                </div>
+                    {!isCollapsed('productIndications') && (
+                      <div className="bg-white">
+                        <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 border-b border-gray-300 flex text-[10px]">
+                          <div className="px-1 py-0.5 w-[30px] font-normal">#</div>
+                          <div className="px-1 py-0.5 flex-1 font-normal">Reported Indication</div>
+                          <div className="px-1 py-0.5 flex-1 font-normal">Coded Indication</div>
+                        </div>
+                        <div ref={indicationsScrollRef} className="max-h-[70px] overflow-y-auto">
+                          <table className="w-full text-[10px] text-left table-fixed">
+                            <tbody>
+                              {productIndications.map((ind, index) => (
+                                <tr
+                                  key={ind.id}
+                                  onClick={() => setActiveIndicationId(ind.id)}
+                                  className={cn(
+                                    "cursor-pointer",
+                                    activeIndicationId === ind.id ? "bg-white" : (index % 2 === 0 ? "bg-white" : "bg-slate-50")
+                                  )}
+                                >
+                                  <td className="px-1 py-1 align-middle border-b border-gray-300 text-red-600 font-bold w-[30px]">{index + 1}.</td>
+                                  <td className="px-1 py-1 align-middle border-b border-gray-300">
+                                    <div className="flex gap-1 relative">
+                                      <input
+                                        className={cn(inp, "flex-1")}
+                                        value={ind.reported}
+                                        onChange={(e) => setProductIndications(p => p.map(item => item.id === ind.id ? { ...item, reported: e.target.value } : item))}
+                                      />
 
-                {/* ======== Product Details ======== */}
-                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
-                  <div className={secHeader}>
-                    <span>Product Details</span>
-                    <button className="w-3 h-3 bg-slate-50 text-black text-[8px] flex items-center justify-center font-bold border border-gray-400 shadow-sm">−</button>
+                                    </div>
+                                  </td>
+                                  <td className="px-1 py-1 align-middle border-b border-gray-300">
+                                    <div className="flex gap-1">
+                                      <input
+                                        className={cn(inp, "flex-1", ind.coded ? "bg-slate-50" : "")}
+                                        value={ind.coded}
+                                        onChange={(e) => setProductIndications(p => p.map(item => item.id === ind.id ? { ...item, coded: e.target.value } : item))}
+                                      />
+                                      <button onClick={() => { setProductIndications(p => p.filter(item => item.id !== ind.id)); if (activeIndicationId === ind.id) setActiveIndicationId(null); }} className="h-[20px] w-[20px] border border-red-500 text-red-500 hover:bg-red-50 transition-colors font-bold bg-white leading-none">X</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="p-2 bg-white">
-                    <div className="grid grid-cols-5 gap-4">
-                      <div className="col-span-4 space-y-2">
-                        <div className="grid grid-cols-4 gap-2">
-                          <div><label className={lbl}>First Dose</label><input className={inp} value={activeProduct?.firstDose || ''} onChange={(e) => updateActiveProduct('firstDose', e.target.value)} /></div>
-                          <div><label className={lbl}>Last Dose</label><input className={inp} value={activeProduct?.lastDose || ''} onChange={(e) => updateActiveProduct('lastDose', e.target.value)} /></div>
-                          <div><label className={lbl}>Duration of Administration</label><input className={inp} value={activeProduct?.durationOfAdmin || ''} onChange={(e) => updateActiveProduct('durationOfAdmin', e.target.value)} /></div>
+
+                  {/* ======== Dosage Regimens (1) ======== */}
+                  <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                    <div className={cn(secHeader, isCollapsed('dosageRegimens') && "border-b-0")}>
+                      <span>Dosage Regimens ({dosageTabs.length})</span>
+                      <CollapseBtn sectionKey="dosageRegimens" />
+                    </div>
+                    {!isCollapsed('dosageRegimens') && (
+                      <div className="p-2 bg-white space-y-2">
+                        <div className="grid grid-cols-6 gap-2 items-start">
+                          <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen.startDate} onChange={(e) => updateDosageTab(activeDosageTab, 'startDate', e.target.value)} /></div>
+                          <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen.stopDate} onChange={(e) => updateDosageTab(activeDosageTab, 'stopDate', e.target.value)} /></div>
+                          <div className="flex flex-col gap-1 mt-3">
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={activeRegimen.ongoing} onChange={(e) => updateDosageTab(activeDosageTab, 'ongoing', e.target.checked)} /> Ongoing</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={activeRegimen.outsideRange} onChange={(e) => updateDosageTab(activeDosageTab, 'outsideRange', e.target.checked)} /> Outside Therapeutic Range</label>
+                          </div>
+                          <div><label className={lbl}>Duration of Regimen</label><input className={inp} value={activeRegimen.duration} onChange={(e) => updateDosageTab(activeDosageTab, 'duration', e.target.value)} /></div>
+                          <div><label className={lbl}>Dose Number</label><input className={inp} value={activeRegimen.doseNumber} onChange={(e) => updateDosageTab(activeDosageTab, 'doseNumber', e.target.value)} /></div>
                           <div className="flex gap-1">
-                            <div className="flex-1"><label className={lbl}>Total Dosage</label><input className={inp} /></div>
-                            <div className="w-12"><label className={lbl}>Units</label><input className={inp} /></div>
+                            <div className="flex-1"><label className={lbl}>Dose</label><input className={inp} value={activeRegimen.dose} onChange={(e) => updateDosageTab(activeDosageTab, 'dose', e.target.value)} /></div>
+                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.doseUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'doseUnits', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Frequency</label><input className={inp} value={activeRegimen.frequency} onChange={(e) => updateDosageTab(activeDosageTab, 'frequency', e.target.value)} /></div>
                           </div>
                         </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          <div><label className={lbl}>Time Between First Dose/Primary Event</label><input className={inp} /></div>
-                          <div><label className={lbl}>Time between Last Dose/Primary Event</label><input className={inp} /></div>
+                        <div className="grid grid-cols-6 gap-2">
+                          <div><label className={lbl}>Dose Description</label><input className={inp} value={activeRegimen.doseDescription} onChange={(e) => updateDosageTab(activeDosageTab, 'doseDescription', e.target.value)} /></div>
                           <div className="flex gap-1">
-                            <div className="flex-1"><label className={lbl}>Total Dose to Primary Event</label><input className={inp} /></div>
-                            <div className="w-12"><label className={lbl}>Units</label><input className={inp} /></div>
+                            <div className="flex-1"><label className={lbl}>Daily Dosage</label><input className={inp} value={activeRegimen.dailyDosage} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosage', e.target.value)} /></div>
+                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.dailyDosageUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosageUnits', e.target.value)} /></div>
                           </div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          <div><label className={lbl}>Action Taken</label><input className={inp} value={activeProduct.actionTaken || ''} onChange={(e) => updateActiveProduct('actionTaken', e.target.value)} /></div>
-                          <div><label className={lbl}>Dechallenge Results</label><select className={sel}><option></option><option>Unk</option><option>Pos</option><option>Neg</option><option>N/A</option></select></div>
-                          <div><label className={lbl}>Date</label><input type="date" className={inp} /></div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          <div><label className={lbl}>Taken Previously / Tolerated</label><select className={sel}><option></option><option>Unknown / N/A</option><option>No / N/A</option><option>Yes / Unknown</option><option>Yes / Tolerated</option><option>Yes / Not Tolerated</option></select></div>
-                          <div><label className={lbl}>Rechallenge Results</label><select className={sel}><option></option><option>Unk</option><option>Pos</option><option>Neg</option><option>N/A</option></select></div>
-                          <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} /></div>
-                          <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} /></div>
-                        </div>
-                      </div>
-                      
-                      {/* Checkboxes right side */}
-                      <div className="space-y-1 mt-4">
-                        <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Abuse</label>
-                        <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Overdose</label>
-                        <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Tampering</label>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'Events' && activeSubTab === 'Event' && (
-            <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden min-h-full flex flex-col">
-              {/* Inner Tab bar for specific Event */}
-              <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200 flex items-end gap-1 shadow-inner relative pt-1">
-                <span className="text-amber-500 absolute left-2 text-[10px] top-1">⚡</span>
-                <div className="flex ml-4 items-end gap-1">
-                  {eventTabs.map(tab => (
-                    <div 
-                      key={tab.id}
-                      onClick={() => setActiveEventTab(tab.id)}
-                      className={cn(
-                        "px-8 py-0.5 text-[10px] font-bold border border-gray-400 cursor-pointer shadow-sm rounded-t-sm flex items-center gap-1",
-                        activeEventTab === tab.id 
-                          ? "bg-white text-black z-10 translate-y-[1px] border-b-white" 
-                          : "bg-slate-50 text-gray-800 border-b-0"
-                      )}
-                    >
-                      <span>{tab.name || '(Empty)'}</span>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteEventTab(tab.id);
-                        }}
-                        className={cn(
-                          "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
-                          activeEventTab === tab.id ? "text-black" : "text-gray-500"
-                        )}
-                        title="Delete Tab"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                  <div 
-                    onClick={() => {
-                      const newId = Date.now();
-                      setEventTabs([...eventTabs, { 
-                        id: newId, 
-                        name: 'New Event', 
-                        descriptionReported: '',
-                        descriptionCoded: '',
-                        chapter: '',
-                        block: '',
-                        category: '',
-                        entity: '',
-                        entityCode: ''
-                      }]);
-                      setActiveEventTab(newId);
-                    }}
-                    className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm cursor-pointer hover:bg-gray-100"
-                  >
-                    (New)
-                  </div>
-                </div>
-                <div className="ml-auto flex gap-1 mb-0.5">
-                  <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
-                  <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
-                </div>
-              </div>
-              <div className="p-1.5 space-y-2 flex-1 bg-white">
-                {/* ======== Event Information ======== */}
-                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
-                  <div className={secHeader}>
-                    <span>Event Information</span>
-                    <button className="h-[18px] px-2 text-[10px] font-normal bg-white text-blue-800 border border-gray-400">Relationships</button>
-                  </div>
-                  <div className="p-2 space-y-2">
-                    <div className="grid grid-cols-2 gap-4">
-                      {/* Left Side */}
-                      <div className="space-y-2">
-                        <div>
-                          <label className={lbl}>Description as Reported</label>
-                          <div className="flex gap-1 relative">
-                            <input className={inp} value={activeEvent.descriptionReported || ''} onChange={(e) => updateActiveEvent('descriptionReported', e.target.value)} />
-                            
-                          </div>
-                        </div>
-                        <div>
-                          <label className={lbl}>Description to be Coded</label>
                           <div className="flex gap-1">
-                            <input className={inp} value={activeEvent.descriptionCoded || ''} onChange={(e) => {
-                              updateActiveEvent('descriptionCoded', e.target.value);
-                              updateActiveEvent('name', e.target.value);
-                            }} onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                openIcdBrowser('event', activeEventTab, activeEvent.descriptionCoded);
-                              }
-                            }} />
-                            <button onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.descriptionCoded)} className="h-[20px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Encode</button>
+                            <div className="flex-1"><label className={lbl}>Regimen Dosage</label><input className={inp} value={activeRegimen.regimenDosage} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosage', e.target.value)} /></div>
+                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.regimenDosageUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosageUnits', e.target.value)} /></div>
+                          </div>
+                          <div className="col-span-1"><label className={lbl}>Patient Route of Administration</label><input className={inp} value={activeRegimen.patientRoute} onChange={(e) => updateDosageTab(activeDosageTab, 'patientRoute', e.target.value)} /></div>
+                          <div className="col-span-2"><label className={lbl}>Parent Route of Administration</label><input className={inp} value={activeRegimen.parentRoute} onChange={(e) => updateDosageTab(activeDosageTab, 'parentRoute', e.target.value)} /></div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          <div><label className={lbl}>Accidental Exposure</label><input className={inp} value={activeRegimen.accidentalExposure} onChange={(e) => updateDosageTab(activeDosageTab, 'accidentalExposure', e.target.value)} /></div>
+                          <div><label className={lbl}>Package ID</label><input className={inp} value={activeRegimen.packageId} onChange={(e) => updateDosageTab(activeDosageTab, 'packageId', e.target.value)} /></div>
+                          <div className="flex gap-2 col-span-2">
+                            <div className="flex-1"><label className={lbl}>Batch / Lot #</label><input className={inp} value={activeRegimen.batchLot} onChange={(e) => updateDosageTab(activeDosageTab, 'batchLot', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Expiration Date</label><input type="date" className={inp} value={activeRegimen.expirationDate} onChange={(e) => updateDosageTab(activeDosageTab, 'expirationDate', e.target.value)} /></div>
                           </div>
                         </div>
 
-                        {/* Event Coding Panel */}
-                        <div className="border border-slate-200 bg-slate-50 p-1 mt-2">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-[11px] font-bold px-1 bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800">Event Coding (ICD-11)</span>
-                            {activeEvent.entity && <span className="bg-white border border-green-500 px-1 text-green-500 font-bold text-[10px]">✓</span>}
-                          </div>
-                          <div className="grid grid-cols-[140px_1fr] gap-x-2 gap-y-1">
-                            <label className={lbl}>Chapter</label><input className={cn(inp, activeEvent.chapter && "bg-slate-50")} value={activeEvent.chapter || ''} onChange={(e) => updateActiveEvent('chapter', e.target.value)} />
-                            <label className={lbl}>SOC</label><input className={cn(inp, activeEvent.block && "bg-slate-50")} value={activeEvent.block || ''} onChange={(e) => updateActiveEvent('block', e.target.value)} />
-                            <label className={lbl}>HLGT</label><input className={cn(inp, activeEvent.category && "bg-slate-50")} value={activeEvent.category || ''} onChange={(e) => updateActiveEvent('category', e.target.value)} />
-                            <label className={lbl}>PT</label>
-                            <div className="flex gap-1">
-                              <input className={cn(inp, "flex-1", activeEvent.entity && "bg-slate-50")} value={activeEvent.entity || ''} onChange={(e) => updateActiveEvent('entity', e.target.value)} onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  openIcdBrowser('event', activeEventTab, activeEvent.entity);
-                                }
-                              }} />
-                              <button onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.entity)} className="w-5 h-[20px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] hover:bg-gray-200">🔍</button>
-                            </div>
-                            <label className={lbl}>PT code</label>
-                            <input className={cn(inp, activeEvent.entityCode && "bg-slate-50")} value={activeEvent.entityCode || ''} onChange={(e) => updateActiveEvent('entityCode', e.target.value)} />
-                          </div>
-                        </div>
-                        
-                        {/* Seriousness Criteria Panel */}
-                        <div className="border border-slate-200 bg-white p-1 mt-2">
-                          <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100 mb-1">Seriousness Criteria</div>
-                          <div className="grid grid-cols-2 gap-x-2 gap-y-1 pl-2 pb-1">
-                            {[
-                              { key: 'death', label: 'Death' },
-                              { key: 'medically_significant', label: 'Medically Significant' },
-                              { key: 'hospitalized', label: 'Hospitalized' },
-                              { key: 'life_threatening', label: 'Life-threatening' },
-                              { key: 'disability', label: 'Disability' },
-                              { key: 'intervention_required', label: 'Intervention Required' },
-                              { key: 'other', label: 'Other:' },
-                              { key: 'congenital_anomaly', label: 'Congenital Anomaly' },
-                            ].map(item => (
-                              <label key={item.key} className="flex items-center gap-1 text-[10px] text-gray-700">
-                                <input
-                                  type="checkbox"
-                                  className="w-3 h-3"
-                                  checked={(activeEvent.seriousnessCriteria || []).includes(item.key)}
-                                  onChange={(e) => {
-                                    const prev = activeEvent.seriousnessCriteria || [];
-                                    const updated = e.target.checked
-                                      ? [...prev, item.key]
-                                      : prev.filter(k => k !== item.key);
-                                    updateActiveEvent('seriousnessCriteria', updated);
+                        {/* Inner Tabs for Dosage */}
+                        <div className="mt-2 flex gap-1 border-b border-slate-200 pb-0.5 overflow-x-auto">
+                          {dosageTabs.map(tab => (
+                            <div
+                              key={tab.id}
+                              onClick={() => setActiveDosageTab(tab.id)}
+                              className={cn(
+                                "px-4 py-0.5 text-[9px] font-bold border border-gray-400 border-b-0 rounded-t-sm shadow-sm flex items-center relative z-10 cursor-pointer whitespace-nowrap min-w-[80px]",
+                                activeDosageTab === tab.id
+                                  ? "bg-white text-gray-700 translate-y-[2px]"
+                                  : "bg-gray-100 text-gray-500 hover:bg-gray-50"
+                              )}
+                            >
+                              <span className="text-amber-500 absolute left-2 text-[10px]">💊</span>
+                              <span className="ml-3 truncate">{tab.name}</span>
+                              {dosageTabs.length > 1 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDosageTabs(p => p.filter(t => t.id !== tab.id));
+                                    if (activeDosageTab === tab.id) setActiveDosageTab(dosageTabs[0].id);
                                   }}
-                                />
-                                {item.label}
-                              </label>
-                            ))}
-                            <input className={cn(inp, "col-span-1 mt-1")} />
+                                  className="ml-2 text-gray-400 hover:text-red-500"
+                                >✕</button>
+                              )}
+                            </div>
+                          ))}
+                          <div onClick={() => {
+                            const newId = Date.now();
+                            setDosageTabs(p => [...p, {
+                              id: newId,
+                              name: 'New Regimen',
+                              startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
+                              doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
+                              dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
+                              patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
+                            }]);
+                            setActiveDosageTab(newId);
+                          }} className="px-4 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm hover:bg-gray-50 cursor-pointer whitespace-nowrap">(New)</div>
+                          <div className="ml-auto flex gap-1 items-end sticky right-0 bg-white pl-2">
+                            <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
+                            <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
                           </div>
                         </div>
                       </div>
+                    )}
+                  </div>
 
-                      {/* Right Side */}
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-[80px_1fr] gap-2 items-center">
-                          <label className={lbl}>Diagnosis</label>
-                          <div className="flex gap-4">
-                            <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" /> Diagnosis</label>
-                            <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" /> Symptoms</label>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div><label className={lbl}>Onset Date/Time</label><input type="datetime-local" className={inp} defaultValue="" /></div>
-                          <div><label className={lbl}>Onset From Last Dose</label><input className={inp} defaultValue="" /></div>
-                          <div><label className={lbl}>Term Highlighted by Reporter</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 mt-4">
-                          <div className="col-span-2"><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={cn(inp, "bg-slate-50")} defaultValue="" /></div>
-                          <div><label className={lbl}>Duration</label><input className={inp} /></div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div><label className={lbl}>Onset Latency</label><input className={inp} defaultValue="" /></div>
-                          <div><label className={lbl}>Receipt Date</label><input type="date" className={inp} defaultValue="" /></div>
-                          <div><label className={lbl}>Patient Has Prior History?</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
-                          <div className="col-start-3"><label className={lbl}>Treatment Received?</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div><label className={lbl}>Intensity</label><input className={inp} /></div>
-                          <div><label className={lbl}>Frequency</label><input className={inp} /></div>
-                          <div><label className={lbl}>Outcome of Event</label><input className={inp} defaultValue="" /></div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 mt-2">
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Lack of Efficacy</label>
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Adverse Drug Withdrawal Reaction</label>
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Progression of Disease</label>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 mt-2">
-                          <div><label className={lbl}>Related to Study Conduct?<br/>(As Reported)</label><select className={sel}><option></option></select></div>
-                          <div><label className={lbl}>Related to Study Conduct?</label><select className={sel}><option></option></select></div>
-                        </div>
-                        <div className="mt-1">
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Dropped From Study Due to Event</label>
-                        </div>
-                        
-                        <div className="border border-gray-300 mt-4 h-32 flex flex-col bg-white">
-                          <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[10px] font-bold flex justify-between items-center border-b border-emerald-100">
-                            <span># Nature of Event</span>
-                            <div className="flex gap-0.5">
-                              <button className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400">Add...</button>
-                              <button className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400">Delete...</button>
+                  {/* ======== Product Details ======== */}
+                  <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden">
+                    <div className={cn(secHeader, isCollapsed('productDetails') && "border-b-0")}>
+                      <span>Product Details</span>
+                      <CollapseBtn sectionKey="productDetails" />
+                    </div>
+                    {!isCollapsed('productDetails') && (
+                      <div className="p-2 bg-white">
+                        <div className="grid grid-cols-5 gap-4">
+                          <div className="col-span-4 space-y-2">
+                            <div className="grid grid-cols-4 gap-2">
+                              <div><label className={lbl}>First Dose</label><input className={inp} value={activeProduct?.firstDose || ''} onChange={(e) => updateActiveProduct('firstDose', e.target.value)} /></div>
+                              <div><label className={lbl}>Last Dose</label><input className={inp} value={activeProduct?.lastDose || ''} onChange={(e) => updateActiveProduct('lastDose', e.target.value)} /></div>
+                              <div><label className={lbl}>Duration of Administration</label><input className={inp} value={activeProduct?.durationOfAdmin || ''} onChange={(e) => updateActiveProduct('durationOfAdmin', e.target.value)} /></div>
+                              <div className="flex gap-1">
+                                <div className="flex-1"><label className={lbl}>Total Dosage</label><input className={inp} /></div>
+                                <div className="w-12"><label className={lbl}>Units</label><input className={inp} /></div>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2">
+                              <div><label className={lbl}>Time Between First Dose/Primary Event</label><input className={inp} /></div>
+                              <div><label className={lbl}>Time between Last Dose/Primary Event</label><input className={inp} /></div>
+                              <div className="flex gap-1">
+                                <div className="flex-1"><label className={lbl}>Total Dose to Primary Event</label><input className={inp} /></div>
+                                <div className="w-12"><label className={lbl}>Units</label><input className={inp} /></div>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2">
+                              <div><label className={lbl}>Action Taken</label><input className={inp} value={activeProduct.actionTaken || ''} onChange={(e) => updateActiveProduct('actionTaken', e.target.value)} /></div>
+                              <div><label className={lbl}>Dechallenge Results</label><select className={sel}><option></option><option>Unk</option><option>Pos</option><option>Neg</option><option>N/A</option></select></div>
+                              <div><label className={lbl}>Date</label><input type="date" className={inp} /></div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2">
+                              <div><label className={lbl}>Taken Previously / Tolerated</label><select className={sel}><option></option><option>Unknown / N/A</option><option>No / N/A</option><option>Yes / Unknown</option><option>Yes / Tolerated</option><option>Yes / Not Tolerated</option></select></div>
+                              <div><label className={lbl}>Rechallenge Results</label><select className={sel}><option></option><option>Unk</option><option>Pos</option><option>Neg</option><option>N/A</option></select></div>
+                              <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} /></div>
+                              <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} /></div>
                             </div>
                           </div>
-                          <div className="flex-1"></div>
+
+                          {/* Checkboxes right side */}
+                          <div className="space-y-1 mt-4">
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Abuse</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Overdose</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Tampering</label>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                  <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[11px] font-bold border-b border-t border-emerald-100 flex justify-between items-center mt-2 shadow-sm">
-                    <span>Details</span>
-                    <div className="flex items-center gap-1">
-                      
-                      <span className="text-[12px] bg-white px-0.5 border border-gray-300">📄</span>
-                    </div>
-                  </div>
-                  <div className="p-2 h-16 bg-white">
-                    <span className="text-[11px] text-gray-800">Possible</span>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {activeTab === 'Events' && activeSubTab === 'Event Assessment' && (
-            <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden min-h-full bg-white flex flex-col">
-              <table className="w-full text-[10px] text-left border-collapse">
-                <thead className="bg-slate-100 text-slate-500 hover:bg-slate-200/60 border-b border-slate-200">
-                  <tr>
-                    <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Product</th>
-                    <th className="px-1 py-1 font-bold border-r border-gray-300">As Reported Causality / As Determined Causa<br/>Event LLT (Description) / PT</th>
-                    <th className="px-1 py-1 font-bold border-r border-gray-300">Seriousness<br/>Severity<br/>Duration</th>
-                    <th className="px-1 py-1 font-bold border-r border-gray-300">Data Sheet</th>
-                    <th className="px-1 py-1 font-bold border-r border-gray-300">License ⊟</th>
-                    <th className="px-1 py-1 font-bold">As Determined<br/>Listedness</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="bg-white">
-                    <td className="px-1 py-1 border-r border-b border-gray-300">
-                      <select className={cn(sel, "w-full mb-1")}><option>--All--</option></select>
-                    </td>
-                    <td className="px-1 py-1 border-r border-b border-gray-300">
-                      <select className={cn(sel, "w-full mb-1")}><option>--All--</option></select>
-                    </td>
-                    <td className="px-1 py-1 border-r border-b border-gray-300"></td>
-                    <td className="px-1 py-1 border-r border-b border-gray-300">
-                      <select className={cn(sel, "w-full mb-1")}>
-                        <option>IB</option>
-                        <option>SMPC</option>
-                        <option>USPI</option>
-                      </select>
-                    </td>
-                    <td className="px-1 py-1 border-r border-b border-gray-300">
-                      <select className={cn(sel, "w-full mb-1")}><option>--Assigned--</option></select>
-                    </td>
-                    <td className="px-1 py-1 border-b border-gray-300"></td>
-                  </tr>
-                  {productTabs.filter(p => p.role === 'Suspect' || p.role === 'Interacting').map(product => 
-                    eventTabs.map(event => {
-                      const activeDatasheets = product.datasheets || [{ name: 'IB', licenses: [{name: 'CA (Inv: CAN235)'}, {name: 'EU (Inv: )'}, {name: 'US (Inv: 48,811)'}] }];
-                      return (
-                        <tr key={`${product.id}-${event.id}`}>
-                          <td className="px-1 py-1 border-r border-gray-300 align-top">
-                            <div className="flex gap-1 items-start mt-1">
-                              <span className="bg-white border border-gray-400 px-0.5 text-[8px] text-amber-600 font-bold h-3">{product.isDR ? 'DR' : 'S'}</span>
-                              
-                              <span className="text-[12px] border border-gray-300 leading-none h-3 bg-white">📄</span>
-                            </div>
-                            <div className="text-blue-700 underline cursor-pointer mt-1 font-semibold leading-tight pr-2">{product.name || '(Unnamed Product)'}</div>
-                          </td>
-                          <td className="px-1 py-1 border-r border-gray-300 align-top">
-                            <div className="flex gap-1 mt-1">
-                              <select className={cn(sel, "w-20 text-red-600 font-semibold")} value={getAssessment(product.id, event.id, 'causalityReported')} onChange={(e) => updateAssessment(product.id, event.id, 'causalityReported', e.target.value)}>
-                                <option value=""></option>
-                                <option value="Certain">Certain</option>
-                                <option value="Probable / Likely">Probable / Likely</option>
-                                <option value="Possible">Possible</option>
-                                <option value="Unlikely">Unlikely</option>
-                                <option value="Conditional / Unclassified">Conditional / Unclassified</option>
-                                <option value="Unassessable / Unclassifiable">Unassessable / Unclassifiable</option>
-                                <option value="Not Related">Not Related</option>
-                              </select>
-                              <select className={cn(sel, "w-20 text-red-600 font-semibold")} value={getAssessment(product.id, event.id, 'causalityDetermined')} onChange={(e) => updateAssessment(product.id, event.id, 'causalityDetermined', e.target.value)}>
-                                <option value=""></option>
-                                <option value="Certain">Certain</option>
-                                <option value="Probable / Likely">Probable / Likely</option>
-                                <option value="Possible">Possible</option>
-                                <option value="Unlikely">Unlikely</option>
-                                <option value="Conditional / Unclassified">Conditional / Unclassified</option>
-                                <option value="Unassessable / Unclassifiable">Unassessable / Unclassifiable</option>
-                                <option value="Not Related">Not Related</option>
-                              </select>
-                            </div>
-                            <div className="mt-1">
-                              <span className="text-blue-700 underline cursor-pointer font-semibold">{event.name && event.name !== 'Unknown Entity' ? event.name : ''}</span> 
-                              {event.descriptionReported && <span className="text-blue-700 underline cursor-pointer italic ml-1">({event.descriptionReported})</span>}
-                              <div className="flex flex-col gap-0.5 mt-1 text-[9px] text-gray-600">
-                                {event.chapter && <div><span className="text-gray-400">└</span> Chapter: <span className="text-blue-600">{event.chapter}</span></div>}
-                                {event.block && <div className="pl-2"><span className="text-gray-400">└</span> SOC: <span className="text-blue-600">{event.block}</span></div>}
-                                {event.category && <div className="pl-4"><span className="text-gray-400">└</span> HLGT: <span className="text-blue-600">{event.category}</span></div>}
-                                <div className={event.category ? "pl-6 flex items-center gap-1 mt-0.5" : "pl-2 flex items-center gap-1 mt-0.5"}>
-                                  <span className="text-gray-400">└</span>
-                                  <span>PT:</span>
-                                  <span className="text-blue-700 underline cursor-pointer">{event.entity || event.descriptionCoded || '...'}</span>
-                                  {event.entityCode && <span className="text-gray-500">[{event.entityCode}]</span>}
-                                  {event.entity && <span className="bg-white border border-green-500 px-1 text-green-500 font-bold text-[8px] leading-none py-0.5">✓</span>}
+            {activeTab === 'Events' && activeSubTab === 'Event' && (
+              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden min-h-full flex flex-col">
+                {/* Inner Tab bar for specific Event */}
+                <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200 flex items-end gap-1 shadow-inner relative pt-1">
+                  <span className="text-amber-500 absolute left-2 text-[10px] top-1">⚡</span>
+                  <div className="flex ml-4 items-end gap-1">
+                    {eventTabs.map(tab => (
+                      <div
+                        key={tab.id}
+                        onClick={() => setActiveEventTab(tab.id)}
+                        className={cn(
+                          "px-8 py-0.5 text-[10px] font-bold border border-gray-400 cursor-pointer shadow-sm rounded-t-sm flex items-center gap-1",
+                          activeEventTab === tab.id
+                            ? "bg-white text-black z-10 translate-y-[1px] border-b-white"
+                            : "bg-slate-50 text-gray-800 border-b-0"
+                        )}
+                      >
+                        <span>{tab.name || '(Empty)'}</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteEventTab(tab.id);
+                          }}
+                          className={cn(
+                            "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
+                            activeEventTab === tab.id ? "text-black" : "text-gray-500"
+                          )}
+                          title="Delete Tab"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div
+                      onClick={() => {
+                        const newId = Date.now();
+                        setEventTabs([...eventTabs, {
+                          id: newId,
+                          name: 'New Event',
+                          descriptionReported: '',
+                          descriptionCoded: '',
+                          chapter: '',
+                          block: '',
+                          category: '',
+                          entity: '',
+                          entityCode: ''
+                        }]);
+                        setActiveEventTab(newId);
+                      }}
+                      className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm cursor-pointer hover:bg-gray-100"
+                    >
+                      (New)
+                    </div>
+                  </div>
+                  <div className="ml-auto flex gap-1 mb-0.5">
+                    <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
+                    <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
+                  </div>
+                </div>
+                <div className="p-1.5 space-y-2 flex-1 bg-white">
+                  {/* ======== Event Information ======== */}
+                  <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
+                    <div className={cn(secHeader, isCollapsed('eventInfo') && "border-b-0")}>
+                      <div className="flex items-center gap-1">
+                        <span>Event Information</span>
+                        <CollapseBtn sectionKey="eventInfo" className="ml-1" />
+                      </div>
+                      <button className="h-[18px] px-2 text-[10px] font-normal bg-white text-blue-800 border border-gray-400">Relationships</button>
+                    </div>
+                    {!isCollapsed('eventInfo') && (
+                      <>
+                        <div className="p-2 space-y-2">
+                          <div className="grid grid-cols-2 gap-4">
+                            {/* Left Side */}
+                            <div className="space-y-2">
+                              <div>
+                                <label className={lbl}>Description as Reported</label>
+                                <div className="flex gap-1 relative">
+                                  <input className={inp} value={activeEvent.descriptionReported || ''} onChange={(e) => updateActiveEvent('descriptionReported', e.target.value)} />
                                 </div>
                               </div>
+                              <div>
+                                <label className={lbl}>Description to be Coded</label>
+                                <div className="flex gap-1">
+                                  <input className={inp} value={activeEvent.descriptionCoded || ''} onChange={(e) => {
+                                    updateActiveEvent('descriptionCoded', e.target.value);
+                                    updateActiveEvent('name', e.target.value);
+                                  }} onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      openIcdBrowser('event', activeEventTab, activeEvent.descriptionCoded);
+                                    }
+                                  }} />
+                                  <button onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.descriptionCoded)} className="h-[20px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Encode</button>
+                                </div>
+                              </div>
+
+                              {/* Event Coding Panel */}
+                              <div className="border border-slate-200 bg-slate-50 p-1 mt-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[11px] font-bold px-1 bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800">Event Coding (ICD-11)</span>
+                                  {activeEvent.entity && <span className="bg-white border border-green-500 px-1 text-green-500 font-bold text-[10px]">✓</span>}
+                                </div>
+                            <div className="grid grid-cols-[140px_1fr] gap-x-2 gap-y-1">
+                              <label className={lbl}>Chapter</label><input className={cn(inp, activeEvent.chapter && "bg-slate-50")} value={activeEvent.chapter || ''} onChange={(e) => updateActiveEvent('chapter', e.target.value)} />
+                              <label className={lbl}>SOC</label><input className={cn(inp, activeEvent.block && "bg-slate-50")} value={activeEvent.block || ''} onChange={(e) => updateActiveEvent('block', e.target.value)} />
+                              <label className={lbl}>HLGT</label><input className={cn(inp, activeEvent.category && "bg-slate-50")} value={activeEvent.category || ''} onChange={(e) => updateActiveEvent('category', e.target.value)} />
+                              <label className={lbl}>PT</label>
+                              <div className="flex gap-1">
+                                <input className={cn(inp, "flex-1", activeEvent.entity && "bg-slate-50")} value={activeEvent.entity || ''} onChange={(e) => updateActiveEvent('entity', e.target.value)} onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    openIcdBrowser('event', activeEventTab, activeEvent.entity);
+                                  }
+                                }} />
+                                <button onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.entity)} className="w-5 h-[20px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] hover:bg-gray-200">🔍</button>
+                              </div>
+                              <label className={lbl}>PT code</label>
+                              <input className={cn(inp, activeEvent.entityCode && "bg-slate-50")} value={activeEvent.entityCode || ''} onChange={(e) => updateActiveEvent('entityCode', e.target.value)} />
                             </div>
-                          </td>
-                          <td className="px-1 py-1 border-r border-gray-300 align-top pt-2 text-gray-800">{getSeriousnessAbbrev(event.seriousnessCriteria) || '—'}</td>
-                          
-                          {/* Datasheet Column */}
-                          <td className="px-1 py-1 border-r border-gray-300 align-top pt-2 space-y-4">
-                            {activeDatasheets.map((ds, idx) => (
-                              <div key={idx} className="text-blue-700 underline cursor-pointer" style={{ marginBottom: `${(ds.licenses?.length || 1) * 20}px` }}>{ds.name}</div>
-                            ))}
-                          </td>
-                          
-                          {/* License Column */}
-                          <td className="px-1 py-1 border-r border-gray-300 align-top pt-2">
-                            {activeDatasheets.map((ds, dsIdx) => (
-                              <div key={`lic-grp-${dsIdx}`} className="space-y-1" style={{ marginBottom: '20px' }}>
-                                {ds.licenses?.map((lic, licIdx) => (
-                                  <div key={`lic-${licIdx}`} className="text-blue-700 underline cursor-pointer truncate h-5 leading-5">{lic.name}</div>
-                                ))}
-                              </div>
-                            ))}
-                          </td>
-                          
-                          {/* Listedness Column */}
-                          <td className="px-1 py-1 align-top pt-2">
-                            {activeDatasheets.map((ds, dsIdx) => (
-                              <div key={`list-grp-${dsIdx}`} className="space-y-1" style={{ marginBottom: '20px' }}>
-                                {ds.licenses?.map((lic, licIdx) => {
-                                  const listKey = `listedness-${dsIdx}-${licIdx}`;
-                                  const listValue = getAssessment(product.id, event.id, listKey) || 'Listed';
-                                  return (
-                                    <div key={`list-${licIdx}`} className="flex items-center gap-1 h-5">
-                                      <select className={cn(sel, "w-20", listValue === 'Unlisted' ? 'text-red-600' : 'text-green-600')} value={listValue} onChange={(e) => updateAssessment(product.id, event.id, listKey, e.target.value)}>
-                                        <option>Listed</option>
-                                        <option>Unlisted</option>
-                                        <option>Unknown</option>
-                                      </select>
-                                      <div className={cn("w-2 h-2 rounded-full border border-gray-400", listValue === 'Unlisted' ? 'bg-red-500' : listValue === 'Listed' ? 'bg-green-500' : 'bg-gray-400')}></div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* ======== Analysis Tab Content ======== */}
-          {activeTab === 'Analysis' && activeSubTab === 'Case Analysis' && (
-            <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
-              <div className={secHeader}>Case Analysis</div>
-              <div className="p-2 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-4">
-                    <div className="flex-1 flex flex-col">
-                      <div className="flex justify-between items-center mb-1">
-                        <label className={lbl}>Narrative</label>
-                        <div className="flex items-center gap-1">
-                          <button className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400">Show Difference</button>
-                          
-                          <span className="text-[14px]">🔭</span>
-                          <button className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400">Generate</button>
-                        </div>
-                      </div>
-                      <textarea className={cn(inp, "w-full h-[280px] resize-none")} value={form.caseNarrative || ""} onChange={h('caseNarrative')} />
-                    </div>
-                  </div>
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className={lbl}>Case Comment</label>
-                        <div className="flex items-center gap-1">
-                          
-                          <span className="text-[14px]">🔭</span>
-                          <button className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400">Generate</button>
-                        </div>
-                      </div>
-                      <textarea className={cn(inp, "w-full h-16 resize-none")} />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className={lbl}>Local Evaluator Comment</label>
-                        <select className={cn(sel, "w-24")}><option></option></select>
-                      </div>
-                      <textarea className={cn(inp, "w-full h-16 resize-none bg-slate-50")} />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className={lbl}>Company Comment</label>
-                        <div className="flex items-center gap-1">
-                          
-                          <span className="text-[14px]">🔭</span>
-                          <button className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400">Generate</button>
-                        </div>
-                      </div>
-                      <textarea className={cn(inp, "w-full h-16 resize-none")} />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className={lbl}>Evaluation in light of similar<br/>events in the past</label>
-                        <div className="flex items-center gap-1">
-                          
-                          <span className="text-[14px]">🔭</span>
-                          <button className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400">Generate</button>
-                        </div>
-                      </div>
-                      <textarea className={cn(inp, "w-full h-16 resize-none")} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className={secHeader}>Case Summary</div>
-              <div className="p-2 grid grid-cols-[200px_1fr] gap-4">
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center"><label className={lbl}>Case Serious</label><select className={cn(sel, "w-24")}><option></option><option>Yes</option><option>No</option></select></div>
-                  <div className="flex justify-between items-center"><label className={lbl}>Company Agent Causal</label><select className={cn(sel, "w-24")}><option></option><option>Yes</option><option>No</option></select></div>
-                  <div className="flex justify-between items-center"><label className={lbl}>Listedness<br/>Determination</label><select className={cn(sel, "w-24")}><option></option><option>Listed</option><option>Unlisted</option><option>Unknown</option></select></div>
-                  <div className="flex justify-between items-center"><label className={lbl}>Case Outcome</label><select className={cn(sel, "w-24")}><option></option><option>Recovered/Resolved</option><option>Recovering/Resolving</option><option>Not Recovered/Not Resolved</option><option>Fatal</option><option>Unknown</option><option>Unchanged</option></select></div>
-                  <div className="flex justify-between items-center"><label className={lbl}>Company<br/>Diagnosis/Syndrome</label><div className="flex items-center gap-1"><button className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400">Encode</button><span className="text-red-500 font-bold text-[14px] cursor-pointer">❌</span></div></div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-start gap-2"><label className={lbl}>Notes:</label><input className={cn(inp, "flex-1")} /></div>
-                  <div className="flex items-start gap-2"><label className={lbl}>Notes:</label><input className={cn(inp, "flex-1")} /></div>
-                  <div className="flex items-start gap-2"><label className={lbl}>Notes:</label><input className={cn(inp, "flex-1")} /></div>
-                  <div className="h-[22px]"></div>
-                  <div className="flex items-start gap-2 mt-4"><label className={lbl}>Notes:</label><input className={cn(inp, "flex-1")} /></div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'Analysis' && activeSubTab === 'MedWatch Info' && (
-            <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
-              <div className={secHeader}>MedWatch Information</div>
-              <div className="p-2 grid grid-cols-2 gap-4">
-                <div className="space-y-4">
-                  <div className="border border-slate-200">
-                    <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">B. Adverse Event or Product Problem</div>
-                    <div className="p-2">
-                      <label className="flex items-center gap-1 text-[10px] font-bold"><span className="w-4">1.</span><input type="checkbox" className="w-3 h-3" /> Adverse Event and/or Product Problem</label>
-                    </div>
-                  </div>
-                  <div className="border border-slate-200">
-                    <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">C. Suspect Medication(s)</div>
-                    <div className="p-2 flex gap-2 items-center">
-                      <label className="text-[10px] font-bold">9. NDC #</label>
-                      <input className={cn(inp, "w-32")} />
-                    </div>
-                  </div>
-                  <div className="border border-slate-200">
-                    <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">G. All Manufacturers</div>
-                    <div className="p-2 space-y-1">
-                      <div className="text-[10px] font-bold mb-2">3. Report Source (check all that apply)</div>
-                      {['Foreign', 'Literature', 'Health Professional', 'Company Representative', 'Study', 'Consumer', 'User Facility', 'Distributor'].map(src => (
-                        <label key={src} className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> {src}</label>
-                      ))}
-                      <div className="flex items-center gap-2 mt-1">
-                        <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Other</label>
-                        <input className={cn(inp, "w-48")} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="border border-slate-200">
-                  <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">F. For Use by User Facility/Importer (Devices Only)</div>
-                  <div className="p-2 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-[10px] font-bold mb-1">1. Check one</div>
-                        <div className="pl-4 space-y-1">
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="radio" className="w-3 h-3" /> User Facility</label>
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="radio" className="w-3 h-3" /> Importer</label>
-                          <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="radio" className="w-3 h-3" /> Suppress Block F Printing</label>
-                        </div>
-                        <div className="mt-4">
-                          <label className="text-[10px] font-bold block mb-0.5">2. UF/Dist report #</label>
-                          <input className={cn(inp, "w-full")} />
-                        </div>
-                        <div className="mt-4">
-                          <label className="text-[10px] font-bold block mb-0.5">3. User facility or distributor name/address</label>
-                          <textarea className={cn(inp, "w-full h-12 resize-none")} />
-                        </div>
-                        <div className="mt-4">
-                          <label className="text-[10px] font-bold block mb-0.5">4. Contact Person</label>
-                          <input className={cn(inp, "w-full")} />
-                        </div>
-                        <div className="mt-4">
-                          <label className="text-[10px] font-bold block mb-0.5">5. Phone Number</label>
-                          <input className={cn(inp, "w-full")} />
-                        </div>
-                        <div className="mt-4">
-                          <label className="text-[10px] font-bold block mb-0.5">6. Date aware of event</label>
-                          <input type="date" className={cn(inp, "w-full")} />
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <div className="text-[10px] font-bold mb-1">10. FDA Codes</div>
-                        <table className="w-full text-[10px] border border-gray-300">
-                          <thead><tr className="bg-slate-50"><th className="border border-gray-300 px-1 text-left">Patient</th><th className="border border-gray-300 px-1 text-left">Device</th></tr></thead>
-                          <tbody>
-                            {[1,2,3].map(row => (
-                              <tr key={row}>
-                                <td className="border border-gray-300 p-0.5"><div className="flex gap-1 items-center"><input className={cn(inp, "w-16")} /> - <input className={cn(inp, "w-16")} /></div></td>
-                                <td className="border border-gray-300 p-0.5"><div className="flex gap-1 items-center"><input className={cn(inp, "w-16")} /> - <input className={cn(inp, "w-16")} /></div></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        <div className="mt-4 flex items-center gap-2">
-                          <label className="flex items-center gap-1 text-[10px] font-bold"><span className="w-4">11.</span><input type="checkbox" className="w-3 h-3" /> Report sent to FDA</label>
-                          <input className={cn(inp, "w-24")} />
-                        </div>
-                        <div className="mt-4 space-y-1">
-                          <div className="text-[10px] font-bold mb-1">12. Location Where Event Occured</div>
-                          {['Hospital', 'Home', 'Nursing Home', 'Outpatient Treatment', 'Outpatient Diagnostic', 'Ambulatory Surgical'].map(loc => (
-                            <label key={loc} className="flex items-center gap-1 text-[10px] text-gray-700 pl-4"><input type="checkbox" className="w-3 h-3" /> {loc}</label>
-                          ))}
-                          <div className="flex items-center gap-2 pl-4 mt-1">
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Other</label>
-                            <input className={cn(inp, "w-32")} />
                           </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
-
-
-          {/* ======== Activities Tab Content ======== */}
-          {activeTab === 'Activities' && (
-            <div className="flex flex-col gap-2 min-h-full">
-              {/* Contact Log */}
-              <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
-                <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5")}>
-                  <span>Contact Log ({contacts.length})</span>
-                  <div className="flex gap-0.5">
-                    <button className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">New Letter</button>
-                    <button onClick={handleAddContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
-                    <button onClick={handleDeleteContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
-                  </div>
-                </div>
-                <table className="w-full text-[10px] text-left border-collapse">
-                  <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
-                    <tr>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Date<br/>Date Sent</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300">Code<br/>Description</th>
-                      <th className="px-1 py-1 font-bold w-1/4">Group<br/>User</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {contacts.map((contact, idx) => (
-                      <tr 
-                        key={contact.id}
-                        onClick={() => setSelectedContactId(contact.id)}
-                        className={cn("border-b border-gray-300 cursor-pointer", selectedContactId === contact.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
-                      >
-                        <td className="px-1 py-1 border-r border-gray-300 align-top text-gray-700 font-bold">{idx + 1}.</td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                          <input className={cn(inp, "w-24")} value={contact.date} onChange={(e) => updateContact(contact.id, 'date', e.target.value)} />
-                          <div className="flex items-center gap-1">
-                            <input className={cn(inp, "w-24")} value={contact.dateSent} onChange={(e) => updateContact(contact.id, 'dateSent', e.target.value)} />
-                            <span className="text-[12px] bg-white border border-gray-400 leading-none h-[14px]">✉️</span>
-                          </div>
-                        </td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                          <div className="flex items-center gap-1">
-                            <input className={cn(inp, "w-32")} value={contact.code} onChange={(e) => updateContact(contact.id, 'code', e.target.value)} />
-                            <span className="text-[14px]">✉️</span>
-                          </div>
-                          <div className="flex items-center gap-1 w-full">
-                            <input className={cn(inp, "flex-1")} value={contact.description} onChange={(e) => updateContact(contact.id, 'description', e.target.value)} />
-                            <span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span>
-                          </div>
-                        </td>
-                        <td className="px-1 py-1 align-top space-y-1">
-                          <input className={cn(inp, "w-full")} value={contact.group} onChange={(e) => updateContact(contact.id, 'group', e.target.value)} />
-                          <input className={cn(inp, "w-full")} value={contact.user} onChange={(e) => updateContact(contact.id, 'user', e.target.value)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Action Items */}
-              <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
-                <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5")}>
-                  <span>Action Items ({actionItems.length})</span>
-                  <div className="flex gap-2 items-center text-black text-[10px] font-normal">
-                    <span className="font-bold mr-1">Show</span>
-                    <label className="flex items-center gap-1"><input type="radio" defaultChecked className="w-3 h-3" /> All</label>
-                    <label className="flex items-center gap-1 mr-2"><input type="radio" className="w-3 h-3" /> Open</label>
-                    <div className="flex gap-0.5">
-                      <button onClick={handleAddActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400">Add</button>
-                      <button onClick={handleDeleteActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400">Delete</button>
-                      <button className="h-[18px] px-2 bg-gray-100 border border-gray-400">Up ▲</button>
-                      <button className="h-[18px] px-2 bg-gray-100 border border-gray-400">Down ▼</button>
-                    </div>
-                  </div>
-                </div>
-                <table className="w-full text-[10px] text-left border-collapse">
-                  <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
-                    <tr>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Date Open<br/>Due / Completed</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300">Code<br/>Description</th>
-                      <th className="px-1 py-1 font-bold w-1/4">Group<br/>User</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {actionItems.map((item, idx) => (
-                      <tr 
-                        key={item.id}
-                        onClick={() => setSelectedActionItemId(item.id)}
-                        className={cn("border-b border-gray-300 cursor-pointer", selectedActionItemId === item.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
-                      >
-                        <td className="px-1 py-1 border-r border-gray-300 align-top font-bold text-gray-700">{idx + 1}.</td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                          <input className={cn(inp, "w-24")} value={item.dateOpen} onChange={(e) => updateActionItem(item.id, 'dateOpen', e.target.value)} />
-                          <div className="pl-4"><input className={cn(inp, "w-24")} value={item.dateDue} onChange={(e) => updateActionItem(item.id, 'dateDue', e.target.value)} /></div>
-                          <div className="pl-8"><input className={cn(inp, "w-24 border-red-500")} value={item.dateCompleted} onChange={(e) => updateActionItem(item.id, 'dateCompleted', e.target.value)} /></div>
-                        </td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                          <div className="flex justify-between items-center">
-                            <input className={cn(inp, "w-48")} value={item.code} onChange={(e) => updateActionItem(item.id, 'code', e.target.value)} />
-                            <span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span>
-                          </div>
-                          <div className="flex items-center gap-1 w-full">
-                            <input className={cn(inp, "flex-1")} value={item.description} onChange={(e) => updateActionItem(item.id, 'description', e.target.value)} />
-                          </div>
-                        </td>
-                        <td className="px-1 py-1 align-top space-y-1">
-                          <input className={cn(inp, "w-full")} value={item.group} onChange={(e) => updateActionItem(item.id, 'group', e.target.value)} />
-                          <input className={cn(inp, "w-full")} value={item.user} onChange={(e) => updateActionItem(item.id, 'user', e.target.value)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Routing Comments */}
-              <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
-                <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5")}>
-                  <span>Routing Comments (2)</span>
-                  <div className="flex gap-0.5">
-                    <button className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Return</button>
-                    <button onClick={() => window.dispatchEvent(new Event('route_case'))} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Route...</button>
-                  </div>
-                </div>
-                <table className="w-full text-[10px] text-left border-collapse">
-                  <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
-                    <tr>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Date<br/>User</th>
-                      <th className="px-1 py-1 font-bold">Comment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-gray-300 bg-white">
-                      <td className="px-1 py-1 border-r border-gray-300 align-top">2.</td>
-                      <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                        <input className={cn(inp, "w-32")} defaultValue="" />
-                        <input className={cn(inp, "w-full")} defaultValue="" />
-                      </td>
-                      <td className="px-1 py-1 align-top">
-                        <div className="flex gap-1 h-full">
-                          <textarea className={cn(inp, "w-full h-10 resize-none flex-1 bg-white")} defaultValue="" />
-                          <div className="flex items-end pb-1"><span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span></div>
-                        </div>
-                      </td>
-                    </tr>
-                    <tr className="bg-white">
-                      <td className="px-1 py-1 border-r border-gray-300 align-top">1.</td>
-                      <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                        <input className={cn(inp, "w-32")} defaultValue="" />
-                        <input className={cn(inp, "w-full")} defaultValue="" />
-                      </td>
-                      <td className="px-1 py-1 align-top">
-                        <div className="flex gap-1 h-full">
-                          <textarea className={cn(inp, "w-full h-8 resize-none flex-1 bg-white")} defaultValue="" />
-                          <div className="flex items-end pb-1"><span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span></div>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Case Lock / Archive */}
-              <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
-                <div className={secHeader}>Case Lock / Archive</div>
-                <div className="p-2 flex gap-4">
-                  <div className="space-y-4 w-1/3">
-                    <div className="flex items-center gap-1">
-                      <label className={cn(lbl, "w-24")}>Case Status</label>
-                      <select className={cn(sel, "flex-1")}><option>Unlocked</option></select>
-                      <span className="text-yellow-500 text-[14px]">🔓</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <label className={lbl}>Closure Date</label>
-                        <input type="date" className={cn(inp, "w-full")} />
-                      </div>
-                      <div className="flex-1">
-                        <label className={lbl}>Locked or Closed By</label>
-                        <input className={cn(inp, "w-full")} />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <label className={lbl}>Notes</label>
-                    <textarea className={cn(inp, "w-full h-16 resize-none bg-slate-50")} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ======== Additional Info Tab Content ======== */}
-          {activeTab === 'Additional Info' && (
-            <div className="flex flex-col gap-2 min-h-full">
-              {/* Notes and Attachment */}
-              <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
-                <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5")}>
-                  <span>Notes and Attachment ({attachments.length})</span>
-                  <div className="flex gap-0.5">
-                    <input 
-                      type="file" 
-                      accept=".pdf,.csv" 
-                      className="hidden" 
-                      ref={fileInputRef} 
-                      onChange={handleAttachFile} 
-                    />
-                    <button onClick={() => fileInputRef.current?.click()} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Attach File</button>
-                    <button onClick={handleAddAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
-                    <button onClick={handleDeleteAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
-                    <button className="h-[18px] px-1 text-[10px] bg-gray-100 text-black border border-gray-400 flex items-center justify-center"><div className="w-2 h-0.5 bg-black"></div></button>
-                  </div>
-                </div>
-                <table className="w-full text-[10px] text-left border-collapse">
-                  <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
-                    <tr>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Classification<br/>Date / Incl. Reg. Sub</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300">Keywords<br/>Description</th>
-                      <th className="px-1 py-1 font-bold w-24"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attachments.map((att, idx) => (
-                      <tr 
-                        key={att.id} 
-                        onClick={() => setSelectedAttachmentId(att.id)}
-                        className={cn("border-b border-gray-300 cursor-pointer", selectedAttachmentId === att.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
-                      >
-                        <td className="px-1 py-1 border-r border-gray-300 align-top text-red-600 font-bold">{idx + 1}.</td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                          <input className={cn(inp, "w-full")} value={att.classification} onChange={(e) => updateAttachment(att.id, 'classification', e.target.value)} />
-                          <input className={cn(inp, "w-24")} value={att.date} onChange={(e) => updateAttachment(att.id, 'date', e.target.value)} />
-                        </td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                          <input className={cn(inp, "w-full")} value={att.keywords} onChange={(e) => updateAttachment(att.id, 'keywords', e.target.value)} />
-                          <input className={cn(inp, "w-full")} value={att.description} onChange={(e) => updateAttachment(att.id, 'description', e.target.value)} />
-                        </td>
-                        <td className="px-1 py-1 align-top space-y-1 flex flex-col items-end">
-                          <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1"><span className="text-[12px]">🔎</span> Select</button>
-                          {att.filename && <div className="text-[9px] text-gray-500 truncate max-w-[80px]" title={att.filename}>{att.filename}</div>}
-                          <div className="flex items-center gap-0.5 cursor-pointer mt-1 mr-1">
-                            <span className="text-[14px]">🔭</span>
-                            <span className="text-[12px] bg-white px-0.5 border border-gray-300 shadow-sm leading-none h-[14px] flex items-center">📄</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* References */}
-              <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
-                <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5")}>
-                  <span>References ({references.length})</span>
-                  <div className="flex gap-0.5">
-                    <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1 mr-1"><span className="text-[12px]">🔎</span> Select</button>
-                    <button onClick={handleAddReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
-                    <button onClick={handleDeleteReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
-                    <button className="h-[18px] px-1 text-[10px] bg-gray-100 text-black border border-gray-400 flex items-center justify-center"><div className="w-2 h-0.5 bg-black"></div></button>
-                  </div>
-                </div>
-                <table className="w-full text-[10px] text-left border-collapse">
-                  <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
-                    <tr>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Type</th>
-                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">ID</th>
-                      <th className="px-1 py-1 font-bold">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {references.map((ref, idx) => (
-                      <tr 
-                        key={ref.id} 
-                        onClick={() => setSelectedReferenceId(ref.id)}
-                        className={cn("border-b border-gray-300 cursor-pointer", selectedReferenceId === ref.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
-                      >
-                        <td className="px-1 py-1 border-r border-gray-300 align-top text-red-600 font-bold">{idx + 1}.</td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top">
-                          <input className={cn(inp, "w-full")} value={ref.type} onChange={(e) => updateReference(ref.id, 'type', e.target.value)} />
-                        </td>
-                        <td className="px-1 py-1 border-r border-gray-300 align-top">
-                          <div className="flex items-center gap-1">
-                            <input className={cn(inp, "w-full")} value={ref.refId} onChange={(e) => updateReference(ref.id, 'refId', e.target.value)} />
-                            <span 
-                              className="text-[14px] cursor-pointer" 
-                              onClick={() => handleLinkCase(ref.refId)}
-                              title="Link case and auto-fill parent info"
-                            >🌍</span>
-                          </div>
-                        </td>
-                        <td className="px-1 py-1 align-top">
-                          <input className={cn(inp, "w-full")} value={ref.notes} onChange={(e) => updateReference(ref.id, 'notes', e.target.value)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-          
-        </fieldset>
-      </div>
-      {/* Product Browser Modal */}
-      {isCompanyProductModalOpen && (
-        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
-          <div className="bg-slate-50 w-[800px] border-2 border-emerald-100 shadow-xl flex flex-col font-sans">
-            {/* Header */}
-            <div className="bg--slate-200 text-white px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100 flex justify-between">
-              <span>Product Browser</span>
-            </div>
-            {/* Body */}
-            <div className="p-2 space-y-2 bg-white m-1 border border-gray-300">
-              <div className="flex gap-4 items-center mb-2 pb-2 border-b border-gray-300">
-                <label className="flex items-center gap-1 text-[10px]"><input type="checkbox" className="w-3 h-3" /> Full Search</label>
-                <button className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400">Clear</button>
-                <div className="flex items-center gap-1"><label className={lbl}>Drug Code</label><input className={cn(inp, "w-40")} /></div>
-                <div className="flex items-center gap-1"><label className={lbl}>Country</label><input className={cn(inp, "w-40")} defaultValue="" /></div>
-                <button className="h-[18px] px-3 text-[9px] bg-gray-100 border border-gray-400 ml-auto">Search</button>
-              </div>
-              <div className="grid grid-cols-4 gap-2 h-[200px]">
-                {/* Columns */}
-                <div className="flex flex-col border border-gray-300">
-                  <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Ingredient</div>
-                  <input className={cn(inp, "m-1")} />
-                  <div className="flex-1 overflow-auto p-1 text-[10px]"><div className="bg-slate-50 p-0.5 border border-amber-200">AMOXICILLIN TRIHYDRATE</div></div>
-                </div>
-                <div className="flex flex-col border border-gray-300">
-                  <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Family</div>
-                  <input className={cn(inp, "m-1")} />
-                  <div className="flex-1 overflow-auto p-1 text-[10px]"><div className="bg-slate-50 p-0.5 border border-amber-200">Wonder Drug - Family</div></div>
-                </div>
-                <div className="flex flex-col border border-gray-300">
-                  <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Product Name</div>
-                  <input className={cn(inp, "m-1")} />
-                  <div className="flex-1 overflow-auto p-1 text-[10px]">
-                    <div className="bg-slate-50 p-0.5 border border-amber-200 mb-0.5">Wonder Drug (Tablet...)</div>
-                    <div className="bg-slate-50 p-0.5 border border-blue-200">Wonder Drug (Unknown...)</div>
-                  </div>
-                </div>
-                <div className="flex flex-col border border-gray-300">
-                  <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Trade Name</div>
-                  <input className={cn(inp, "m-1")} defaultValue="" />
-                  <div className="flex-1 overflow-auto p-1 text-[10px]">
-                    <div className="p-0.5 text-gray-700">Wonder Drug (USA) (UNITED STATES 88-417)</div>
-                  </div>
-                </div>
-              </div>
-              <div className="border-t border-gray-300 pt-2 grid grid-cols-2 gap-4">
-                <div className="grid grid-cols-[100px_1fr] gap-1 items-center">
-                  <label className={lbl}>Family</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
-                  <label className={lbl}>Ingredient</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
-                  <label className={lbl}>Product Name</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
-                  <label className={lbl}>Trade Name</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
-                </div>
-                <div className="grid grid-cols-[100px_1fr] gap-1 items-center content-start">
-                  <label className={lbl}>Model#</label><input className={cn(inp, "bg-slate-50")} />
-                  <label className={lbl}>Company Drug Code</label><input className={cn(inp, "bg-slate-50")} />
-                  <label className={lbl}>Indication</label><input className={cn(inp, "bg-slate-50")} />
-                </div>
-              </div>
-            </div>
-            {/* Footer */}
-            <div className="bg-slate-50 p-1.5 flex justify-center gap-2 border-t border-slate-200">
-              <button onClick={() => setIsCompanyProductModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Select</button>
-              <button onClick={() => setIsCompanyProductModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* WHO Drug Coding Modal */}
-      {isWhoDrugModalOpen && (
-        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
-          <div className="bg-slate-50 w-[850px] border-2 border-emerald-100 shadow-xl flex flex-col font-sans">
-            <div className="bg--slate-200 text-white px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100">
-              Drug Coding (WHO-DRUG 2009-SEP)
-            </div>
-            <div className="p-2 space-y-2 bg-white m-1 border border-gray-300">
-              <div className="flex flex-wrap gap-1.5 items-end mb-2 text-[10px] font-semibold text-gray-700">
-                <div className="flex flex-col"><label>Product Type</label><select className={cn(sel, "w-14")}><option>(All)</option></select></div>
-                <div className="flex flex-col"><label>ATC Code</label><input className={cn(inp, "w-14")} /></div>
-                <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" defaultChecked className="w-3 h-3" /> Drug Code</label><input className={cn(inp, "w-20")} /></div>
-                <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" className="w-3 h-3" /> Medicinal Prod ID</label><input className={cn(inp, "w-28")} /></div>
-                <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" className="w-3 h-3" /> Trade Name</label><input className={cn(inp, "w-28")} defaultValue="" /></div>
-                <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" className="w-3 h-3" /> Ingredient</label><input className={cn(inp, "w-20")} /></div>
-                <div className="flex flex-col"><label>Formulation</label><input className={cn(inp, "w-14")} /></div>
-                <div className="flex flex-col"><label>Country</label><input className={cn(inp, "w-14")} /></div>
-                
-                {/* Search / Clear Controls */}
-                <div className="flex flex-col gap-1 ml-auto">
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-1"><input type="checkbox" className="w-3 h-3" /> Full Search</label>
-                    <button className="h-[18px] px-3 text-[9px] bg-gray-100 border border-gray-400">Clear</button>
-                  </div>
-                  <button className="h-[18px] px-3 text-[9px] bg-gray-100 border border-gray-400 self-end">Search</button>
-                </div>
-              </div>
-              <div className="border border-gray-300 h-[150px] overflow-auto">
-                <table className="w-full text-[10px] text-left">
-                  <thead className="sticky top-0 bg-slate-50 border-b border-gray-300 text-gray-700">
-                    <tr>
-                      <th className="px-1 py-1 font-bold">Trade Name <span className="text-amber-500">▲</span></th>
-                      <th className="px-1 py-1 font-bold">Formulation / Strength</th>
-                      <th className="px-1 py-1 font-bold">Sales Country</th>
-                      <th className="px-1 py-1 font-bold">Generic?</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="bg-slate-50"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM /01479302/</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
-                    <tr className="bg-white"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM /01479303/</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
-                    <tr className="bg-white"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM HP</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
-                    <tr className="bg-slate-50"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM I.V.</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
-                    <tr className="bg-white"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM-MUPS /01479302/</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="border border-slate-200 mt-2">
-                <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">Drug Detail</div>
-                <div className="p-1 grid grid-cols-[100px_1fr] gap-x-2 gap-y-1 items-center bg-slate-50">
-                  <label className={lbl}>Trade Name</label>
-                  <div className="flex gap-2"><input className={cn(inp, "bg-white flex-1")} defaultValue="" /><input className={cn(inp, "bg-white flex-1")} defaultValue="" /></div>
-                  <label className={lbl}>MAH</label><input className={cn(inp, "bg-white")} defaultValue="" />
-                  <label className={lbl}>Drug Code</label>
-                  <div className="flex gap-2 items-center">
-                    <input className={cn(inp, "bg-white flex-1")} defaultValue="" />
-                    <label className={lbl}>ATC Code</label><input className={cn(inp, "bg-white w-24")} defaultValue="" />
-                    <label className={lbl}>ATC Description</label><input className={cn(inp, "bg-white flex-1")} defaultValue="" />
-                  </div>
-                  <label className={lbl}>Medicinal Product ID</label><input className={cn(inp, "bg-white")} />
-                  <label className={lbl}>Ingredients</label><input className={cn(inp, "bg-white")} defaultValue="" />
-                </div>
-              </div>
-            </div>
-            <div className="bg-slate-50 p-1.5 flex justify-center gap-2 border-t border-slate-200">
-              <button onClick={() => setIsWhoDrugModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Select</button>
-              <button onClick={() => setIsWhoDrugModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Save Success Modal */}
-      {showSaveSuccess && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
-          <div className="bg-slate-50 w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
-            {/* Title Bar */}
-            <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
-              <div className="flex items-center gap-1.5 text-white font-bold text-[12px] tracking-wide">
-                <span>Argus Safety - Webpage Dialog</span>
-              </div>
-              <button onClick={() => setShowSaveSuccess(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[20px] h-[20px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
-            </div>
-            
-            <div className="p-4 bg-white flex-1 min-h-[100px] flex gap-3 relative">
-              <div className="text-[32px] leading-none select-none drop-shadow-md">ℹ️</div>
-              <div className="text-[12px] font-sans pt-2">
-                Case {caseData?.case_number || '2010NA000028'} was saved successfully.
-              </div>
-            </div>
-
-            <div className="bg-slate-50 px-4 py-2 border-t border-gray-300 flex justify-center gap-2">
-              <button onClick={() => setShowSaveSuccess(false)} className="px-5 py-0.5 border border-gray-400 bg-white hover:bg-slate-50 text-[11px] shadow-sm">OK</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Print Case Modal */}
-      {showPrintModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <div className="bg-white w-[600px] border-[2px] border-slate-200 rounded-sm shadow-xl flex flex-col font-tahoma overflow-hidden">
-            {/* Title Bar */}
-            <div className="bg-gradient-to-b from--emerald-200 to--slate-200 px-2 py-1 flex justify-between items-center border-b border-white">
-              <span className="text-white font-bold text-[11px] tracking-wide">Print Case</span>
-              <button onClick={() => setShowPrintModal(false)} className="text-white hover:text-red-200 leading-none text-[12px] font-bold">✕</button>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex px-2 pt-1 bg-white gap-0.5 border-b border-gray-400 mt-1">
-              <div className="px-3 py-0.5 text-[11px] font-bold bg-white text-black border border-gray-400 border-b-white z-10 translate-y-[1px]">Print</div>
-            </div>
-
-            {/* Content area */}
-            <div className="bg-white border-t border-gray-400 p-8 border-b">
-              <div className="flex flex-col gap-3">
-                <label className="flex items-center gap-2 text-[11px] text-gray-800 font-bold cursor-pointer">
-                  <input type="checkbox" checked={printCioms} onChange={(e) => setPrintCioms(e.target.checked)} className="w-3 h-3 accent-gray-500" /> CIOMS Format
-                </label>
-                <label className="flex items-center gap-2 text-[11px] text-gray-800 font-bold cursor-pointer">
-                  <input type="checkbox" checked={printAdr} onChange={(e) => setPrintAdr(e.target.checked)} className="w-3 h-3 accent-gray-500" /> ADR Format
-                </label>
-              </div>
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="bg-white px-4 py-3 flex justify-center gap-3">
-              <button onClick={() => {
-                setShowPrintModal(false);
-                const onsetDateStr = eventTabs[0]?.dateOfOnset || '';
-                let onsetDay = '', onsetMonth = '', onsetYear = '';
-                if (onsetDateStr && onsetDateStr !== '00-MMM-0000') {
-                  const parts = onsetDateStr.split('-');
-                  if (parts.length === 3) {
-                    onsetDay = parts[0];
-                    onsetMonth = parts[1];
-                    onsetYear = parts[2];
-                  }
-                }
-                const p = productTabs[0] || {};
-                const therapyDates = [p.dosageStartDate, p.dosageStopDate].filter(Boolean).join(' to ');
-                const dailyDose = [p.concentration, p.units].filter(Boolean).join(' ');
-                const concomitant = productTabs.filter(pt => pt.role === 'Concomitant').map(pt => pt.name || pt.genericName).join(', ');
-                const history = form.patMedicalHistory || form.parentMedicalHistory || '';
-                const indication = p.indications && p.indications.length > 0 ? p.indications[0].reported : '';
-
-                const pdfData = {
-                  initials: form.patInitials || '',
-                  country: form.patCountry || caseData?.country || '',
-                  age: form.patAge ? `${form.patAge} ${form.patAgeUnits || ''}`.trim() : '',
-                  sex: form.patGender || '',
-                  weight: form.patWeight ? `${form.patWeight} ${form.patWeightUnits || ''}`.trim() : '',
-                  description: form.caseNarrative || "",
-                  onsetDay,
-                  onsetMonth,
-                  onsetYear,
-                  suspectDrug: p.name || p.genericName || '',
-                  route: p.route || p.formulation || '',
-                  dailyDose,
-                  therapyDates,
-                  manufacturer: p.labeler || '',
-                  indication,
-                  concomitant,
-                  history,
-                  controlNo: caseData?.case_number || '',
-                  dateReceived: form.caseReceiptDate || '',
-                  reporterName: form.firstName || form.lastName ? `${form.firstName || ''} ${form.lastName || ''}`.trim() : '',
-                  reportDate: new Date().toLocaleDateString('en-GB').replace(/\//g, '-').toUpperCase()
-                };
-
-                if (printCioms) generateCiomsPdf(pdfData);
-                if (printAdr) generateAdrPdf(pdfData);
-              }} className="px-4 py-0.5 text-[10px] bg-white border border-gray-400 text-gray-800 hover:bg-gray-50 shadow-sm">Print</button>
-              <button onClick={() => setShowPrintModal(false)} className="px-4 py-0.5 text-[10px] bg-white border border-gray-400 text-gray-800 hover:bg-gray-50 shadow-sm">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Case Details Modal */}
-      {showCaseDetailsModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
-          <div className="bg-white w-[600px] border-[2px] border-slate-200 rounded-sm shadow-xl flex flex-col font-tahoma overflow-hidden">
-            <div className="bg-gradient-to-b from--emerald-200 to--slate-200 px-2 py-1 flex justify-between items-center border-b border-white">
-              <span className="text-white font-bold text-[11px] tracking-wide">Case Details</span>
-              <button onClick={() => setShowCaseDetailsModal(false)} className="text-white hover:text-red-200 leading-none text-[12px] font-bold">✕</button>
-            </div>
-            <div className="bg-white border-t border-gray-400 p-2 min-h-[300px] max-h-[60vh] overflow-y-auto">
-              <div className="font-sans text-[11px]">
-                <div className="flex items-center gap-1 mb-1">
-                  <span className="w-3 h-3 flex items-center justify-center border border-gray-400 text-[9px] cursor-pointer bg-white leading-none">-</span>
-                  <span className="text-yellow-500">📁</span>
-                  <span>Revisions</span>
-                </div>
-                <div className="pl-5 flex flex-col text-[10px]">
-                  <div className="flex items-center gap-1 mb-1 w-fit pr-1">
-                    <span className="text-gray-500 border border-gray-400 px-0.5 text-[8px]">📄</span>
-                    <span className="text-black">Revision History</span>
-                  </div>
-                  {(() => {
-                    const uniqueRevs = Array.from(new Set(revisions.map(r => r.rev))).map(revNum => revisions.find(r => r.rev === revNum));
-                    return (
-                      <>
-                        {loadingRevisions ? (
-                          <div className="pl-4 py-1 text-gray-500 italic">Loading...</div>
-                        ) : uniqueRevs.length === 0 ? (
-                          <div className="pl-4 py-1 text-gray-500 italic">No revision history found.</div>
-                        ) : (
-                          <>
-                            <div className="grid grid-cols-[80px_100px_20px_100px_1fr] gap-2 mb-1 border-b border-gray-300 font-bold text-gray-600 mt-1 pb-1">
-                              <span>Case Number</span>
-                              <span>Revision Date</span>
-                              <span>Rev</span>
-                              <span>User</span>
-                              <span>Action/Entity</span>
+                          {/* Seriousness Criteria Panel */}
+                          <div className="border border-slate-200 bg-white p-1 mt-2">
+                            <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100 mb-1">Seriousness Criteria</div>
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 pl-2 pb-1">
+                              {[
+                                { key: 'death', label: 'Death' },
+                                { key: 'medically_significant', label: 'Medically Significant' },
+                                { key: 'hospitalized', label: 'Hospitalized' },
+                                { key: 'life_threatening', label: 'Life-threatening' },
+                                { key: 'disability', label: 'Disability' },
+                                { key: 'intervention_required', label: 'Intervention Required' },
+                                { key: 'other', label: 'Other:' },
+                                { key: 'congenital_anomaly', label: 'Congenital Anomaly' },
+                              ].map(item => (
+                                <label key={item.key} className="flex items-center gap-1 text-[10px] text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    className="w-3 h-3"
+                                    checked={(activeEvent.seriousnessCriteria || []).includes(item.key)}
+                                    onChange={(e) => {
+                                      const prev = activeEvent.seriousnessCriteria || [];
+                                      const updated = e.target.checked
+                                        ? [...prev, item.key]
+                                        : prev.filter(k => k !== item.key);
+                                      updateActiveEvent('seriousnessCriteria', updated);
+                                    }}
+                                  />
+                                  {item.label}
+                                </label>
+                              ))}
+                              <input className={cn(inp, "col-span-1 mt-1")} />
                             </div>
-                            {uniqueRevs.map((rev, idx) => (
-                              <div key={idx} className="grid grid-cols-[80px_100px_20px_100px_1fr] gap-2 mb-1 hover:bg-blue-50 cursor-pointer">
-                                <span className="flex items-center gap-1 text-gray-500"><span className="text-[8px]">▶</span> <span className="text-black">{caseData?.case_number || 'Case'}</span></span>
-                                <span>{rev.time}</span>
-                                <span>{rev.rev}</span>
-                                <span className="truncate" title={rev.user}>{rev.user}</span>
-                                <span className="truncate" title={rev.parent}>{rev.parent}</span>
+                          </div>
+                        </div>
+
+                        {/* Right Side */}
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-[80px_1fr] gap-2 items-center">
+                            <label className={lbl}>Diagnosis</label>
+                            <div className="flex gap-4">
+                              <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" /> Diagnosis</label>
+                              <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" /> Symptoms</label>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div><label className={lbl}>Onset Date/Time</label><input type="datetime-local" className={inp} defaultValue="" /></div>
+                            <div><label className={lbl}>Onset From Last Dose</label><input className={inp} defaultValue="" /></div>
+                            <div><label className={lbl}>Term Highlighted by Reporter</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 mt-4">
+                            <div className="col-span-2"><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={cn(inp, "bg-slate-50")} defaultValue="" /></div>
+                            <div><label className={lbl}>Duration</label><input className={inp} /></div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div><label className={lbl}>Onset Latency</label><input className={inp} defaultValue="" /></div>
+                            <div><label className={lbl}>Receipt Date</label><input type="date" className={inp} defaultValue="" /></div>
+                            <div><label className={lbl}>Patient Has Prior History?</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
+                            <div className="col-start-3"><label className={lbl}>Treatment Received?</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div><label className={lbl}>Intensity</label><input className={inp} /></div>
+                            <div><label className={lbl}>Frequency</label><input className={inp} /></div>
+                            <div><label className={lbl}>Outcome of Event</label><input className={inp} defaultValue="" /></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mt-2">
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Lack of Efficacy</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Adverse Drug Withdrawal Reaction</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Progression of Disease</label>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            <div><label className={lbl}>Related to Study Conduct?<br />(As Reported)</label><select className={sel}><option></option></select></div>
+                            <div><label className={lbl}>Related to Study Conduct?</label><select className={sel}><option></option></select></div>
+                          </div>
+                          <div className="mt-1">
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Dropped From Study Due to Event</label>
+                          </div>
+
+                          <div className="border border-gray-300 mt-4 h-32 flex flex-col bg-white">
+                            <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[10px] font-bold flex justify-between items-center border-b border-emerald-100">
+                              <span># Nature of Event</span>
+                              <div className="flex gap-0.5">
+                                <button className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400">Add...</button>
+                                <button className="h-[16px] px-2 text-[9px] bg-gray-100 text-black border border-gray-400">Delete...</button>
                               </div>
-                            ))}
-                          </>
-                        )}
+                            </div>
+                            <div className="flex-1"></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[11px] font-bold border-b border-t border-emerald-100 flex justify-between items-center mt-2 shadow-sm">
+                      <span>Details</span>
+                      <div className="flex items-center gap-1">
+
+                        <span className="text-[12px] bg-white px-0.5 border border-gray-300">📄</span>
+                      </div>
+                    </div>
+                        <div className="p-2 h-16 bg-white">
+                          <span className="text-[11px] text-gray-800">Possible</span>
+                        </div>
                       </>
-                    );
-                  })()}
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="bg-white px-4 py-2 flex justify-end border-t border-gray-400">
-              <button onClick={() => setShowCaseDetailsModal(false)} className="px-5 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
+            )}
 
-      {/* Validation Warnings Modal */}
-      {showValidationModal && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-transparent">
-          <div className="absolute top-[20%] right-[10%] bg-white w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
-            {/* Title Bar */}
-            <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
-              <div className="flex items-center gap-1 text-white font-bold text-[11px] tracking-wide">
-                <span>Argus Safety - Case Form Validations -- Webpage Dialog</span>
+            {activeTab === 'Events' && activeSubTab === 'Event Assessment' && (
+              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden min-h-full bg-white flex flex-col">
+                <table className="w-full text-[10px] text-left border-collapse">
+                  <thead className="bg-slate-100 text-slate-500 hover:bg-slate-200/60 border-b border-slate-200">
+                    <tr>
+                      <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Product</th>
+                      <th className="px-1 py-1 font-bold border-r border-gray-300">As Reported Causality / As Determined Causa<br />Event LLT (Description) / PT</th>
+                      <th className="px-1 py-1 font-bold border-r border-gray-300">Seriousness<br />Severity<br />Duration</th>
+                      <th className="px-1 py-1 font-bold border-r border-gray-300">Data Sheet</th>
+                      <th className="px-1 py-1 font-bold border-r border-gray-300">License ⊟</th>
+                      <th className="px-1 py-1 font-bold">As Determined<br />Listedness</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="bg-white">
+                      <td className="px-1 py-1 border-r border-b border-gray-300">
+                        <select className={cn(sel, "w-full mb-1")}><option>--All--</option></select>
+                      </td>
+                      <td className="px-1 py-1 border-r border-b border-gray-300">
+                        <select className={cn(sel, "w-full mb-1")}><option>--All--</option></select>
+                      </td>
+                      <td className="px-1 py-1 border-r border-b border-gray-300"></td>
+                      <td className="px-1 py-1 border-r border-b border-gray-300">
+                        <select className={cn(sel, "w-full mb-1")}>
+                          <option>IB</option>
+                          <option>SMPC</option>
+                          <option>USPI</option>
+                        </select>
+                      </td>
+                      <td className="px-1 py-1 border-r border-b border-gray-300">
+                        <select className={cn(sel, "w-full mb-1")}><option>--Assigned--</option></select>
+                      </td>
+                      <td className="px-1 py-1 border-b border-gray-300"></td>
+                    </tr>
+                    {productTabs.filter(p => p.role === 'Suspect' || p.role === 'Interacting').map(product =>
+                      eventTabs.map(event => {
+                        const activeDatasheets = product.datasheets || [{ name: 'IB', licenses: [{ name: 'CA (Inv: CAN235)' }, { name: 'EU (Inv: )' }, { name: 'US (Inv: 48,811)' }] }];
+                        return (
+                          <tr key={`${product.id}-${event.id}`}>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top">
+                              <div className="flex gap-1 items-start mt-1">
+                                <span className="bg-white border border-gray-400 px-0.5 text-[8px] text-amber-600 font-bold h-3">{product.isDR ? 'DR' : 'S'}</span>
+
+                                <span className="text-[12px] border border-gray-300 leading-none h-3 bg-white">📄</span>
+                              </div>
+                              <div className="text-blue-700 underline cursor-pointer mt-1 font-semibold leading-tight pr-2">{product.name || '(Unnamed Product)'}</div>
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top">
+                              <div className="flex gap-1 mt-1">
+                                <select className={cn(sel, "w-20 text-red-600 font-semibold")} value={getAssessment(product.id, event.id, 'causalityReported')} onChange={(e) => updateAssessment(product.id, event.id, 'causalityReported', e.target.value)}>
+                                  <option value=""></option>
+                                  <option value="Certain">Certain</option>
+                                  <option value="Probable / Likely">Probable / Likely</option>
+                                  <option value="Possible">Possible</option>
+                                  <option value="Unlikely">Unlikely</option>
+                                  <option value="Conditional / Unclassified">Conditional / Unclassified</option>
+                                  <option value="Unassessable / Unclassifiable">Unassessable / Unclassifiable</option>
+                                  <option value="Not Related">Not Related</option>
+                                </select>
+                                <select className={cn(sel, "w-20 text-red-600 font-semibold")} value={getAssessment(product.id, event.id, 'causalityDetermined')} onChange={(e) => updateAssessment(product.id, event.id, 'causalityDetermined', e.target.value)}>
+                                  <option value=""></option>
+                                  <option value="Certain">Certain</option>
+                                  <option value="Probable / Likely">Probable / Likely</option>
+                                  <option value="Possible">Possible</option>
+                                  <option value="Unlikely">Unlikely</option>
+                                  <option value="Conditional / Unclassified">Conditional / Unclassified</option>
+                                  <option value="Unassessable / Unclassifiable">Unassessable / Unclassifiable</option>
+                                  <option value="Not Related">Not Related</option>
+                                </select>
+                              </div>
+                              <div className="mt-1">
+                                <span className="text-blue-700 underline cursor-pointer font-semibold">{event.name && event.name !== 'Unknown Entity' ? event.name : ''}</span>
+                                {event.descriptionReported && <span className="text-blue-700 underline cursor-pointer italic ml-1">({event.descriptionReported})</span>}
+                                <div className="flex flex-col gap-0.5 mt-1 text-[9px] text-gray-600">
+                                  {event.chapter && <div><span className="text-gray-400">└</span> Chapter: <span className="text-blue-600">{event.chapter}</span></div>}
+                                  {event.block && <div className="pl-2"><span className="text-gray-400">└</span> SOC: <span className="text-blue-600">{event.block}</span></div>}
+                                  {event.category && <div className="pl-4"><span className="text-gray-400">└</span> HLGT: <span className="text-blue-600">{event.category}</span></div>}
+                                  <div className={event.category ? "pl-6 flex items-center gap-1 mt-0.5" : "pl-2 flex items-center gap-1 mt-0.5"}>
+                                    <span className="text-gray-400">└</span>
+                                    <span>PT:</span>
+                                    <span className="text-blue-700 underline cursor-pointer">{event.entity || event.descriptionCoded || '...'}</span>
+                                    {event.entityCode && <span className="text-gray-500">[{event.entityCode}]</span>}
+                                    {event.entity && <span className="bg-white border border-green-500 px-1 text-green-500 font-bold text-[8px] leading-none py-0.5">✓</span>}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top pt-2 text-gray-800">{getSeriousnessAbbrev(event.seriousnessCriteria) || '—'}</td>
+
+                            {/* Datasheet Column */}
+                            <td className="px-1 py-1 border-r border-gray-300 align-top pt-2 space-y-4">
+                              {activeDatasheets.map((ds, idx) => (
+                                <div key={idx} className="text-blue-700 underline cursor-pointer" style={{ marginBottom: `${(ds.licenses?.length || 1) * 20}px` }}>{ds.name}</div>
+                              ))}
+                            </td>
+
+                            {/* License Column */}
+                            <td className="px-1 py-1 border-r border-gray-300 align-top pt-2">
+                              {activeDatasheets.map((ds, dsIdx) => (
+                                <div key={`lic-grp-${dsIdx}`} className="space-y-1" style={{ marginBottom: '20px' }}>
+                                  {ds.licenses?.map((lic, licIdx) => (
+                                    <div key={`lic-${licIdx}`} className="text-blue-700 underline cursor-pointer truncate h-5 leading-5">{lic.name}</div>
+                                  ))}
+                                </div>
+                              ))}
+                            </td>
+
+                            {/* Listedness Column */}
+                            <td className="px-1 py-1 align-top pt-2">
+                              {activeDatasheets.map((ds, dsIdx) => (
+                                <div key={`list-grp-${dsIdx}`} className="space-y-1" style={{ marginBottom: '20px' }}>
+                                  {ds.licenses?.map((lic, licIdx) => {
+                                    const listKey = `listedness-${dsIdx}-${licIdx}`;
+                                    const listValue = getAssessment(product.id, event.id, listKey) || 'Listed';
+                                    return (
+                                      <div key={`list-${licIdx}`} className="flex items-center gap-1 h-5">
+                                        <select className={cn(sel, "w-20", listValue === 'Unlisted' ? 'text-red-600' : 'text-green-600')} value={listValue} onChange={(e) => updateAssessment(product.id, event.id, listKey, e.target.value)}>
+                                          <option>Listed</option>
+                                          <option>Unlisted</option>
+                                          <option>Unknown</option>
+                                        </select>
+                                        <div className={cn("w-2 h-2 rounded-full border border-gray-400", listValue === 'Unlisted' ? 'bg-red-500' : listValue === 'Listed' ? 'bg-green-500' : 'bg-gray-400')}></div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
               </div>
-              <button onClick={() => setShowValidationModal(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
-            </div>
-            
-            {/* Fake URL Bar */}
-            <div className="bg-white border-b border-gray-400 px-2 py-0.5 text-[10px] text-gray-600 flex items-center gap-1">
-              <span className="text-blue-600 text-[12px]">🌐</span> http://172.16.12.102:8083/ArgusNET/CommonWebUIComponent/Error/...
-            </div>
-            
-            {/* Content */}
-            <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100">Case Form Validations</div>
-            <div className="bg-white border-b border-gray-400 p-4 flex gap-3 min-h-[140px] max-h-[300px] overflow-y-auto">
-              <div className="text-[28px] leading-none drop-shadow-sm select-none">{validationErrors.length > 0 ? '⚠️' : '✅'}</div>
-              <div className="text-[11px] font-sans w-full">
-                <div className="font-bold mb-1 text-gray-800">{validationErrors.length > 0 ? 'Warnings:' : 'Success:'}</div>
-                {validationErrors.length > 0 ? (
-                  <ul className="text-gray-700 list-disc pl-4 space-y-1">
-                    {validationErrors.map((err, i) => (
-                      <li key={i}>{err}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="text-gray-700">No validation warnings found. Case is valid.</div>
+            )}
+
+            {/* ======== Analysis Tab Content ======== */}
+            {activeTab === 'Analysis' && activeSubTab === 'Case Analysis' && (
+              <div className="space-y-2">
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
+                  <div className={cn(secHeader, isCollapsed('caseAnalysis') && "border-b-0")}>
+                    <div className="flex items-center gap-1">
+                      <span>Case Analysis</span>
+                      <CollapseBtn sectionKey="caseAnalysis" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('caseAnalysis') && (
+                    <div className="p-2 space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-4">
+                          <div className="flex-1 flex flex-col">
+                            <div className="flex justify-between items-center mb-1">
+                              <label className={lbl}>Narrative</label>
+                              <div className="flex items-center gap-1">
+                                <button type="button" className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200">Show Difference</button>
+
+                                <span className="text-[14px]">🔭</span>
+                                <button type="button" onClick={handleGenerateNarrative} className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Generate</button>
+                              </div>
+                            </div>
+                            <textarea className={cn(inp, "w-full h-[280px] resize-none")} value={form.caseNarrative || ""} onChange={h('caseNarrative')} placeholder="Clinical narrative description of the case..." />
+                          </div>
+                        </div>
+                        <div className="space-y-4">
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className={lbl}>Case Comment</label>
+                              <div className="flex items-center gap-1">
+
+                                <span className="text-[14px]">🔭</span>
+                                <button type="button" onClick={handleGenerateCaseComment} className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Generate</button>
+                              </div>
+                            </div>
+                            <textarea className={cn(inp, "w-full h-16 resize-none")} value={form.caseComment || ""} onChange={h('caseComment')} placeholder="Case comment..." />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className={lbl}>Local Evaluator Comment</label>
+                              <select className={cn(sel, "w-24")} value={form.localEvaluator || ""} onChange={h('localEvaluator')}>
+                                <option></option>
+                                <option>Physician</option>
+                                <option>Pharmacist</option>
+                                <option>Specialist</option>
+                                <option>Reviewer</option>
+                              </select>
+                            </div>
+                            <textarea className={cn(inp, "w-full h-16 resize-none bg-slate-50")} value={form.localEvaluatorComment || ""} onChange={h('localEvaluatorComment')} placeholder="Local evaluator comment..." />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className={lbl}>Company Comment</label>
+                              <div className="flex items-center gap-1">
+
+                                <span className="text-[14px]">🔭</span>
+                                <button type="button" onClick={handleGenerateCompanyComment} className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Generate</button>
+                              </div>
+                            </div>
+                            <textarea className={cn(inp, "w-full h-16 resize-none")} value={form.companyComment || ""} onChange={h('companyComment')} placeholder="Company comment..." />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className={lbl}>Evaluation in light of similar<br />events in the past</label>
+                              <div className="flex items-center gap-1">
+
+                                <span className="text-[14px]">🔭</span>
+                                <button type="button" onClick={handleGenerateSimilarEvents} className="h-[18px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Generate</button>
+                              </div>
+                            </div>
+                            <textarea className={cn(inp, "w-full h-16 resize-none")} value={form.evaluationSimilarEvents || ""} onChange={h('evaluationSimilarEvents')} placeholder="Evaluation in light of similar events..." />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
+                  <div className={cn(secHeader, isCollapsed('caseSummary') && "border-b-0")}>
+                    <div className="flex items-center gap-1">
+                      <span>Case Summary</span>
+                      <CollapseBtn sectionKey="caseSummary" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('caseSummary') && (
+                    <div className="p-2 grid grid-cols-[200px_1fr] gap-4">
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                          <label className={lbl}>Case Serious</label>
+                          <select className={cn(sel, "w-24")} value={form.caseSeriousSummary || form.caseSerious || ""} onChange={(e) => {
+                            h('caseSeriousSummary')(e);
+                            h('caseSerious')(e);
+                          }}>
+                            <option></option><option>Yes</option><option>No</option>
+                          </select>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <label className={lbl}>Company Agent Causal</label>
+                          <select className={cn(sel, "w-24")} value={form.companyAgentCausal || ""} onChange={h('companyAgentCausal')}>
+                            <option></option><option>Yes</option><option>No</option>
+                          </select>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <label className={lbl}>Listedness<br />Determination</label>
+                          <select className={cn(sel, "w-24")} value={form.listednessDetermination || ""} onChange={h('listednessDetermination')}>
+                            <option></option><option>Listed</option><option>Unlisted</option><option>Unknown</option>
+                          </select>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <label className={lbl}>Case Outcome</label>
+                          <select className={cn(sel, "w-24")} value={form.caseOutcome || ""} onChange={h('caseOutcome')}>
+                            <option></option><option>Recovered/Resolved</option><option>Recovering/Resolving</option><option>Not Recovered/Not Resolved</option><option>Fatal</option><option>Unknown</option><option>Unchanged</option>
+                          </select>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <label className={lbl}>Company<br />Diagnosis/Syndrome</label>
+                          <div className="flex items-center gap-1">
+                            <button type="button" className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400">Encode</button>
+                            <span className="text-red-500 font-bold text-[14px] cursor-pointer">❌</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-start gap-2">
+                          <label className={lbl}>Notes:</label>
+                          <input className={cn(inp, "flex-1")} value={form.caseSeriousNotes || ""} onChange={h('caseSeriousNotes')} placeholder="Seriousness notes..." />
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <label className={lbl}>Notes:</label>
+                          <input className={cn(inp, "flex-1")} value={form.companyAgentCausalNotes || ""} onChange={h('companyAgentCausalNotes')} placeholder="Causality notes..." />
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <label className={lbl}>Notes:</label>
+                          <input className={cn(inp, "flex-1")} value={form.listednessDeterminationNotes || ""} onChange={h('listednessDeterminationNotes')} placeholder="Listedness notes..." />
+                        </div>
+                        <div className="h-[22px]"></div>
+                        <div className="flex items-start gap-2 mt-4">
+                          <label className={lbl}>Notes:</label>
+                          <input className={cn(inp, "flex-1")} value={form.companyDiagnosisNotes || ""} onChange={h('companyDiagnosisNotes')} placeholder="Company diagnosis notes..." />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'Analysis' && activeSubTab === 'MedWatch Info' && (
+              <div className="border border-slate-200 shadow-sm rounded-sm overflow-hidden bg-white">
+                <div className={cn(secHeader, isCollapsed('medwatchInfo') && "border-b-0")}>
+                  <div className="flex items-center gap-1">
+                    <span>MedWatch Information</span>
+                    <CollapseBtn sectionKey="medwatchInfo" className="ml-1" />
+                  </div>
+                </div>
+                {!isCollapsed('medwatchInfo') && (
+                  <div className="p-2 grid grid-cols-2 gap-4">
+                    <div className="space-y-4">
+                      <div className="border border-slate-200">
+                        <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">B. Adverse Event or Product Problem</div>
+                        <div className="p-2">
+                          <label className="flex items-center gap-1 text-[10px] font-bold"><span className="w-4">1.</span><input type="checkbox" className="w-3 h-3" /> Adverse Event and/or Product Problem</label>
+                        </div>
+                      </div>
+                      <div className="border border-slate-200">
+                        <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">C. Suspect Medication(s)</div>
+                        <div className="p-2 flex gap-2 items-center">
+                          <label className="text-[10px] font-bold">9. NDC #</label>
+                          <input className={cn(inp, "w-32")} />
+                        </div>
+                      </div>
+                      <div className="border border-slate-200">
+                        <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">G. All Manufacturers</div>
+                        <div className="p-2 space-y-1">
+                          <div className="text-[10px] font-bold mb-2">3. Report Source (check all that apply)</div>
+                          {['Foreign', 'Literature', 'Health Professional', 'Company Representative', 'Study', 'Consumer', 'User Facility', 'Distributor'].map(src => (
+                            <label key={src} className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> {src}</label>
+                          ))}
+                          <div className="flex items-center gap-2 mt-1">
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Other</label>
+                            <input className={cn(inp, "w-48")} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200">
+                      <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">F. For Use by User Facility/Importer (Devices Only)</div>
+                      <div className="p-2 space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="text-[10px] font-bold mb-1">1. Check one</div>
+                            <div className="pl-4 space-y-1">
+                              <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="radio" className="w-3 h-3" /> User Facility</label>
+                              <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="radio" className="w-3 h-3" /> Importer</label>
+                              <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="radio" className="w-3 h-3" /> Suppress Block F Printing</label>
+                            </div>
+                            <div className="mt-4">
+                              <label className="text-[10px] font-bold block mb-0.5">2. UF/Dist report #</label>
+                              <input className={cn(inp, "w-full")} />
+                            </div>
+                            <div className="mt-4">
+                              <label className="text-[10px] font-bold block mb-0.5">3. User facility or distributor name/address</label>
+                              <textarea className={cn(inp, "w-full h-12 resize-none")} />
+                            </div>
+                            <div className="mt-4">
+                              <label className="text-[10px] font-bold block mb-0.5">4. Contact Person</label>
+                              <input className={cn(inp, "w-full")} />
+                            </div>
+                            <div className="mt-4">
+                              <label className="text-[10px] font-bold block mb-0.5">5. Phone Number</label>
+                              <input className={cn(inp, "w-full")} />
+                            </div>
+                            <div className="mt-4">
+                              <label className="text-[10px] font-bold block mb-0.5">6. Date aware of event</label>
+                              <input type="date" className={cn(inp, "w-full")} />
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[10px] font-bold mb-1">10. FDA Codes</div>
+                            <table className="w-full text-[10px] border border-gray-300">
+                              <thead><tr className="bg-slate-50"><th className="border border-gray-300 px-1 text-left">Patient</th><th className="border border-gray-300 px-1 text-left">Device</th></tr></thead>
+                              <tbody>
+                                {[1, 2, 3].map(row => (
+                                  <tr key={row}>
+                                    <td className="border border-gray-300 p-0.5"><div className="flex gap-1 items-center"><input className={cn(inp, "w-16")} /> - <input className={cn(inp, "w-16")} /></div></td>
+                                    <td className="border border-gray-300 p-0.5"><div className="flex gap-1 items-center"><input className={cn(inp, "w-16")} /> - <input className={cn(inp, "w-16")} /></div></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            <div className="mt-4 flex items-center gap-2">
+                              <label className="flex items-center gap-1 text-[10px] font-bold"><span className="w-4">11.</span><input type="checkbox" className="w-3 h-3" /> Report sent to FDA</label>
+                              <input className={cn(inp, "w-24")} />
+                            </div>
+                            <div className="mt-4 space-y-1">
+                              <div className="text-[10px] font-bold mb-1">12. Location Where Event Occured</div>
+                              {['Hospital', 'Home', 'Nursing Home', 'Outpatient Treatment', 'Outpatient Diagnostic', 'Ambulatory Surgical'].map(loc => (
+                                <label key={loc} className="flex items-center gap-1 text-[10px] text-gray-700 pl-4"><input type="checkbox" className="w-3 h-3" /> {loc}</label>
+                              ))}
+                              <div className="flex items-center gap-2 pl-4 mt-1">
+                                <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Other</label>
+                                <input className={cn(inp, "w-32")} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-            
-            {/* Footer */}
-            <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-b border-gray-400">
-              <div></div>
-              <div className="flex gap-2">
-                <button className="px-5 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Copy</button>
-                <button onClick={() => setShowValidationModal(false)} className="px-5 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">OK</button>
+            )}
+
+
+
+            {/* ======== Activities Tab Content ======== */}
+            {activeTab === 'Activities' && (
+              <div className="flex flex-col gap-2 min-h-full">
+                {/* Contact Log */}
+                <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
+                  <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('contactLog') && "border-b-0")}>
+                    <span>Contact Log ({contacts.length})</span>
+                    <div className="flex items-center gap-1">
+                      <div className="flex gap-0.5">
+                        <button type="button" onClick={handleAddContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 cursor-pointer hover:bg-gray-200">Add</button>
+                        <button type="button" onClick={handleDeleteContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 cursor-pointer hover:bg-gray-200">Delete</button>
+                      </div>
+                      <CollapseBtn sectionKey="contactLog" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('contactLog') && (
+                    <table className="w-full text-[10px] text-left border-collapse">
+                      <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
+                        <tr>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Date<br />Date Sent</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300">Code<br />Description</th>
+                          <th className="px-1 py-1 font-bold w-1/4">Group<br />User</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {contacts.map((contact, idx) => (
+                          <tr
+                            key={contact.id}
+                            onClick={() => setSelectedContactId(contact.id)}
+                            className={cn("border-b border-gray-300 cursor-pointer", selectedContactId === contact.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
+                          >
+                            <td className="px-1 py-1 border-r border-gray-300 align-top text-gray-700 font-bold">{idx + 1}.</td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <input 
+                                type="date" 
+                                className={cn(inp, "w-full min-w-[130px] h-[20px] text-[10px] px-1 bg-white")} 
+                                value={formatDateForInput(contact.date)} 
+                                onChange={(e) => updateContact(contact.id, 'date', e.target.value)} 
+                              />
+                              <div className="flex items-center gap-1">
+                                <input 
+                                  type="date" 
+                                  className={cn(inp, "w-full min-w-[130px] h-[20px] text-[10px] px-1 bg-white")} 
+                                  value={formatDateForInput(contact.dateSent)} 
+                                  onChange={(e) => updateContact(contact.id, 'dateSent', e.target.value)} 
+                                />
+                                <span className="text-[12px] bg-white border border-gray-400 leading-none h-[14px] px-0.5" title="Letter Sent">✉️</span>
+                              </div>
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <div className="flex items-center gap-1">
+                                <input className={cn(inp, "w-32")} value={contact.code} onChange={(e) => updateContact(contact.id, 'code', e.target.value)} />
+                                <span className="text-[14px]">✉️</span>
+                              </div>
+                              <div className="flex items-center gap-1 w-full">
+                                <input className={cn(inp, "flex-1")} value={contact.description} onChange={(e) => updateContact(contact.id, 'description', e.target.value)} />
+                                <span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span>
+                              </div>
+                            </td>
+                            <td className="px-1 py-1 align-top space-y-1">
+                              <input className={cn(inp, "w-full")} value={contact.group} onChange={(e) => updateContact(contact.id, 'group', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={contact.user} onChange={(e) => updateContact(contact.id, 'user', e.target.value)} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Action Items */}
+                <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
+                  <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('actionItems') && "border-b-0")}>
+                    <span>Action Items ({actionItems.length})</span>
+                    <div className="flex gap-2 items-center text-black text-[10px] font-normal">
+                      <span className="font-bold mr-1">Show</span>
+                      <label className="flex items-center gap-1"><input type="radio" defaultChecked className="w-3 h-3" /> All</label>
+                      <label className="flex items-center gap-1 mr-2"><input type="radio" className="w-3 h-3" /> Open</label>
+                      <div className="flex gap-0.5">
+                        <button type="button" onClick={handleAddActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400 cursor-pointer hover:bg-gray-200">Add</button>
+                        <button type="button" onClick={handleDeleteActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400 cursor-pointer hover:bg-gray-200">Delete</button>
+                        <button type="button" className="h-[18px] px-2 bg-gray-100 border border-gray-400">Up ▲</button>
+                        <button type="button" className="h-[18px] px-2 bg-gray-100 border border-gray-400">Down ▼</button>
+                      </div>
+                      <CollapseBtn sectionKey="actionItems" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('actionItems') && (
+                    <table className="w-full text-[10px] text-left border-collapse">
+                      <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
+                        <tr>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Date Open<br />Due / Completed</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300">Code<br />Description</th>
+                          <th className="px-1 py-1 font-bold w-1/4">Group<br />User</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {actionItems.map((item, idx) => (
+                          <tr
+                            key={item.id}
+                            onClick={() => setSelectedActionItemId(item.id)}
+                            className={cn("border-b border-gray-300 cursor-pointer", selectedActionItemId === item.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
+                          >
+                            <td className="px-1 py-1 border-r border-gray-300 align-top font-bold text-gray-700">{idx + 1}.</td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <input 
+                                type="date" 
+                                className={cn(inp, "w-full min-w-[130px] h-[20px] text-[10px] px-1 bg-white")} 
+                                value={formatDateForInput(item.dateOpen)} 
+                                onChange={(e) => updateActionItem(item.id, 'dateOpen', e.target.value)} 
+                              />
+                              <div className="pl-2">
+                                <input 
+                                  type="date" 
+                                  className={cn(inp, "w-full min-w-[130px] h-[20px] text-[10px] px-1 bg-white")} 
+                                  value={formatDateForInput(item.dateDue)} 
+                                  onChange={(e) => updateActionItem(item.id, 'dateDue', e.target.value)} 
+                                />
+                              </div>
+                              <div className="pl-4">
+                                <input 
+                                  type="date" 
+                                  className={cn(inp, "w-full min-w-[130px] h-[20px] text-[10px] px-1 bg-white border-red-500")} 
+                                  value={formatDateForInput(item.dateCompleted)} 
+                                  onChange={(e) => updateActionItem(item.id, 'dateCompleted', e.target.value)} 
+                                />
+                              </div>
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <div className="flex justify-between items-center">
+                                <input className={cn(inp, "w-48")} value={item.code} onChange={(e) => updateActionItem(item.id, 'code', e.target.value)} />
+                                <span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span>
+                              </div>
+                              <div className="flex items-center gap-1 w-full">
+                                <input className={cn(inp, "flex-1")} value={item.description} onChange={(e) => updateActionItem(item.id, 'description', e.target.value)} />
+                              </div>
+                            </td>
+                            <td className="px-1 py-1 align-top space-y-1">
+                              <input className={cn(inp, "w-full")} value={item.group} onChange={(e) => updateActionItem(item.id, 'group', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={item.user} onChange={(e) => updateActionItem(item.id, 'user', e.target.value)} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Routing Comments */}
+                <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
+                  <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('routingComments') && "border-b-0")}>
+                    <span>Routing Comments ({routingComments.length})</span>
+                    <div className="flex items-center gap-1">
+                      <div className="flex gap-0.5">
+                        <button type="button" className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200">Return</button>
+                        <button type="button" onClick={() => window.dispatchEvent(new Event('route_case'))} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200">Route...</button>
+                      </div>
+                      <CollapseBtn sectionKey="routingComments" className="ml-1" />
+                    </div>
+                  </div>
+                  {!isCollapsed('routingComments') && (
+                    <table className="w-full text-[10px] text-left border-collapse">
+                      <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
+                        <tr>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Date<br />User</th>
+                          <th className="px-1 py-1 font-bold">Comment</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {routingComments.map((rc, idx) => (
+                          <tr key={rc.id || idx} className="border-b border-gray-300 bg-white">
+                            <td className="px-1 py-1 border-r border-gray-300 align-top font-bold text-gray-700">
+                              {routingComments.length - idx}.
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <input 
+                                type="date" 
+                                className={cn(inp, "w-full min-w-[130px] h-[20px] text-[10px] px-1 bg-white")} 
+                                value={formatDateForInput(rc.date)} 
+                                onChange={(e) => updateRoutingComment(rc.id, 'date', e.target.value)}
+                              />
+                              <input 
+                                className={cn(inp, "w-full")} 
+                                value={rc.user || ''} 
+                                onChange={(e) => updateRoutingComment(rc.id, 'user', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-1 py-1 align-top">
+                              <div className="flex gap-1 h-full">
+                                <textarea 
+                                  className={cn(inp, "w-full h-10 resize-none flex-1 bg-white")} 
+                                  value={rc.comment || ''} 
+                                  onChange={(e) => updateRoutingComment(rc.id, 'comment', e.target.value)}
+                                />
+                                <div className="flex items-end pb-1">
+                                  <span className="text-[14px] bg-gray-200 border border-gray-400 px-0.5 leading-none cursor-pointer">🔭</span>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Case Lock / Archive */}
+                <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
+                  <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('caseLock') && "border-b-0")}>
+                    <span>Case Lock / Archive</span>
+                    <CollapseBtn sectionKey="caseLock" className="ml-1" />
+                  </div>
+                  {!isCollapsed('caseLock') && (
+                    <div className="p-2 flex gap-4">
+                      <div className="space-y-4 w-1/3">
+                        <div className="flex items-center gap-1">
+                          <label className={cn(lbl, "w-24")}>Case Status</label>
+                          <select 
+                            className={cn(sel, "flex-1")}
+                            value={form.caseLockStatus || 'Unlocked'}
+                            onChange={h('caseLockStatus')}
+                          >
+                            <option value="Unlocked">Unlocked</option>
+                            <option value="Locked">Locked</option>
+                            <option value="Archived">Archived</option>
+                          </select>
+                          <span className="text-yellow-500 text-[14px]">
+                            {form.caseLockStatus === 'Locked' ? '🔒' : (form.caseLockStatus === 'Archived' ? '📁' : '🔓')}
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <label className={lbl}>Closure Date</label>
+                            <input 
+                              type="date" 
+                              className={cn(inp, "w-full")} 
+                              value={formatDateForInput(form.closureDate)}
+                              onChange={h('closureDate')}
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className={lbl}>Locked or Closed By</label>
+                            <input 
+                              className={cn(inp, "w-full")} 
+                              value={form.lockedOrClosedBy || ''}
+                              onChange={h('lockedOrClosedBy')}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex-1">
+                        <label className={lbl}>Notes</label>
+                        <textarea 
+                          className={cn(inp, "w-full h-16 resize-none bg-slate-50")} 
+                          value={form.caseLockNotes || ''}
+                          onChange={h('caseLockNotes')}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ======== Additional Info Tab Content ======== */}
+            {activeTab === 'Additional Info' && (
+              <div className="flex flex-col gap-2 min-h-full">
+                {/* Notes and Attachment */}
+                <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
+                  <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('notesAndAttachment') && "border-b-0")}>
+                    <div className="flex items-center gap-1">
+                      <span>Notes and Attachment ({attachments.length})</span>
+                      <CollapseBtn sectionKey="notesAndAttachment" className="ml-1" />
+                    </div>
+                    <div className="flex gap-0.5">
+                      <input
+                        type="file"
+                        accept=".pdf,.csv"
+                        className="hidden"
+                        ref={fileInputRef}
+                        onChange={handleAttachFile}
+                      />
+                      <button onClick={() => fileInputRef.current?.click()} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Attach File</button>
+                      <button onClick={handleAddAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
+                      <button onClick={handleDeleteAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
+                      <button
+                        type="button"
+                        onClick={() => toggleSection('notesAndAttachment')}
+                        title={isCollapsed('notesAndAttachment') ? "Expand" : "Collapse"}
+                        className="h-[18px] px-1.5 text-[10px] bg-gray-100 text-black border border-gray-400 flex items-center justify-center hover:bg-gray-200 cursor-pointer font-bold leading-none"
+                      >
+                        {isCollapsed('notesAndAttachment') ? "+" : "−"}
+                      </button>
+                    </div>
+                  </div>
+                  {!isCollapsed('notesAndAttachment') && (
+                    <table className="w-full text-[10px] text-left border-collapse">
+                      <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
+                        <tr>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Classification<br />Date / Incl. Reg. Sub</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300">Keywords<br />Description</th>
+                          <th className="px-1 py-1 font-bold w-24"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attachments.map((att, idx) => (
+                          <tr
+                            key={att.id}
+                            onClick={() => setSelectedAttachmentId(att.id)}
+                            className={cn("border-b border-gray-300 cursor-pointer", selectedAttachmentId === att.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
+                          >
+                            <td className="px-1 py-1 border-r border-gray-300 align-top text-red-600 font-bold">{idx + 1}.</td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <input className={cn(inp, "w-full")} value={att.classification} onChange={(e) => updateAttachment(att.id, 'classification', e.target.value)} />
+                              <input className={cn(inp, "w-24")} value={att.date} onChange={(e) => updateAttachment(att.id, 'date', e.target.value)} />
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
+                              <input className={cn(inp, "w-full")} value={att.keywords} onChange={(e) => updateAttachment(att.id, 'keywords', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={att.description} onChange={(e) => updateAttachment(att.id, 'description', e.target.value)} />
+                            </td>
+                            <td className="px-1 py-1 align-top space-y-1 flex flex-col items-end">
+                              <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1"><span className="text-[12px]">🔎</span> Select</button>
+                              {att.filename && <div className="text-[9px] text-gray-500 truncate max-w-[80px]" title={att.filename}>{att.filename}</div>}
+                              <div className="flex items-center gap-0.5 cursor-pointer mt-1 mr-1">
+                                <span className="text-[14px]">🔭</span>
+                                <span className="text-[12px] bg-white px-0.5 border border-gray-300 shadow-sm leading-none h-[14px] flex items-center">📄</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* References */}
+                <div className="border border-slate-200 shadow-sm rounded-sm bg-white">
+                  <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('references') && "border-b-0")}>
+                    <div className="flex items-center gap-1">
+                      <span>References ({references.length})</span>
+                      <CollapseBtn sectionKey="references" className="ml-1" />
+                    </div>
+                    <div className="flex gap-0.5">
+                      <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1 mr-1"><span className="text-[12px]">🔎</span> Select</button>
+                      <button onClick={handleAddReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
+                      <button onClick={handleDeleteReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
+                      <button
+                        type="button"
+                        onClick={() => toggleSection('references')}
+                        title={isCollapsed('references') ? "Expand" : "Collapse"}
+                        className="h-[18px] px-1.5 text-[10px] bg-gray-100 text-black border border-gray-400 flex items-center justify-center hover:bg-gray-200 cursor-pointer font-bold leading-none"
+                      >
+                        {isCollapsed('references') ? "+" : "−"}
+                      </button>
+                    </div>
+                  </div>
+                  {!isCollapsed('references') && (
+                    <table className="w-full text-[10px] text-left border-collapse">
+                      <thead className="bg-slate-50 text-gray-700 border-b border-gray-300">
+                        <tr>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Type</th>
+                          <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">ID</th>
+                          <th className="px-1 py-1 font-bold">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {references.map((ref, idx) => (
+                          <tr
+                            key={ref.id}
+                            onClick={() => setSelectedReferenceId(ref.id)}
+                            className={cn("border-b border-gray-300 cursor-pointer", selectedReferenceId === ref.id ? "bg-slate-50" : (idx % 2 === 0 ? "bg-white" : "bg-white"))}
+                          >
+                            <td className="px-1 py-1 border-r border-gray-300 align-top text-red-600 font-bold">{idx + 1}.</td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top">
+                              <input className={cn(inp, "w-full")} value={ref.type} onChange={(e) => updateReference(ref.id, 'type', e.target.value)} />
+                            </td>
+                            <td className="px-1 py-1 border-r border-gray-300 align-top">
+                              <div className="flex items-center gap-1">
+                                <input className={cn(inp, "w-full")} value={ref.refId} onChange={(e) => updateReference(ref.id, 'refId', e.target.value)} />
+                                <span
+                                  className="text-[14px] cursor-pointer"
+                                  onClick={() => handleLinkCase(ref.refId)}
+                                  title="Link case and auto-fill parent info"
+                                >🌍</span>
+                              </div>
+                            </td>
+                            <td className="px-1 py-1 align-top">
+                              <input className={cn(inp, "w-full")} value={ref.notes} onChange={(e) => updateReference(ref.id, 'notes', e.target.value)} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+
+          </fieldset>
+        </div>
+        {/* Product Browser Modal */}
+        {isCompanyProductModalOpen && (
+          <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+            <div className="bg-slate-50 w-[800px] border-2 border-emerald-100 shadow-xl flex flex-col font-sans">
+              {/* Header */}
+              <div className="bg--slate-200 text-white px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100 flex justify-between">
+                <span>Product Browser</span>
+              </div>
+              {/* Body */}
+              <div className="p-2 space-y-2 bg-white m-1 border border-gray-300">
+                <div className="flex gap-4 items-center mb-2 pb-2 border-b border-gray-300">
+                  <label className="flex items-center gap-1 text-[10px]"><input type="checkbox" className="w-3 h-3" /> Full Search</label>
+                  <button className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400">Clear</button>
+                  <div className="flex items-center gap-1"><label className={lbl}>Drug Code</label><input className={cn(inp, "w-40")} /></div>
+                  <div className="flex items-center gap-1"><label className={lbl}>Country</label><input className={cn(inp, "w-40")} defaultValue="" /></div>
+                  <button className="h-[18px] px-3 text-[9px] bg-gray-100 border border-gray-400 ml-auto">Search</button>
+                </div>
+                <div className="grid grid-cols-4 gap-2 h-[200px]">
+                  {/* Columns */}
+                  <div className="flex flex-col border border-gray-300">
+                    <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Ingredient</div>
+                    <input className={cn(inp, "m-1")} />
+                    <div className="flex-1 overflow-auto p-1 text-[10px]"><div className="bg-slate-50 p-0.5 border border-amber-200">AMOXICILLIN TRIHYDRATE</div></div>
+                  </div>
+                  <div className="flex flex-col border border-gray-300">
+                    <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Family</div>
+                    <input className={cn(inp, "m-1")} />
+                    <div className="flex-1 overflow-auto p-1 text-[10px]"><div className="bg-slate-50 p-0.5 border border-amber-200">Wonder Drug - Family</div></div>
+                  </div>
+                  <div className="flex flex-col border border-gray-300">
+                    <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Product Name</div>
+                    <input className={cn(inp, "m-1")} />
+                    <div className="flex-1 overflow-auto p-1 text-[10px]">
+                      <div className="bg-slate-50 p-0.5 border border-amber-200 mb-0.5">Wonder Drug (Tablet...)</div>
+                      <div className="bg-slate-50 p-0.5 border border-blue-200">Wonder Drug (Unknown...)</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col border border-gray-300">
+                    <div className="bg-gray-100 px-1 py-0.5 text-[10px] font-bold border-b border-gray-300">Trade Name</div>
+                    <input className={cn(inp, "m-1")} defaultValue="" />
+                    <div className="flex-1 overflow-auto p-1 text-[10px]">
+                      <div className="p-0.5 text-gray-700">Wonder Drug (USA) (UNITED STATES 88-417)</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="border-t border-gray-300 pt-2 grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-[100px_1fr] gap-1 items-center">
+                    <label className={lbl}>Family</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
+                    <label className={lbl}>Ingredient</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
+                    <label className={lbl}>Product Name</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
+                    <label className={lbl}>Trade Name</label><input className={cn(inp, "bg-slate-50")} defaultValue="" />
+                  </div>
+                  <div className="grid grid-cols-[100px_1fr] gap-1 items-center content-start">
+                    <label className={lbl}>Model#</label><input className={cn(inp, "bg-slate-50")} />
+                    <label className={lbl}>Company Drug Code</label><input className={cn(inp, "bg-slate-50")} />
+                    <label className={lbl}>Indication</label><input className={cn(inp, "bg-slate-50")} />
+                  </div>
+                </div>
+              </div>
+              {/* Footer */}
+              <div className="bg-slate-50 p-1.5 flex justify-center gap-2 border-t border-slate-200">
+                <button onClick={() => setIsCompanyProductModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Select</button>
+                <button onClick={() => setIsCompanyProductModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Cancel</button>
               </div>
             </div>
-            <div className="bg-slate-50 px-2 py-0.5 text-[9px] text-gray-600 flex items-center gap-1">
-              <span className="text-[10px]">🌐</span> Internet
+          </div>
+        )}
+
+        {/* WHO Drug Coding Modal */}
+        {isWhoDrugModalOpen && (
+          <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+            <div className="bg-slate-50 w-[850px] border-2 border-emerald-100 shadow-xl flex flex-col font-sans">
+              <div className="bg--slate-200 text-white px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100">
+                Drug Coding (WHO-DRUG 2009-SEP)
+              </div>
+              <div className="p-2 space-y-2 bg-white m-1 border border-gray-300">
+                <div className="flex flex-wrap gap-1.5 items-end mb-2 text-[10px] font-semibold text-gray-700">
+                  <div className="flex flex-col"><label>Product Type</label><select className={cn(sel, "w-14")}><option>(All)</option></select></div>
+                  <div className="flex flex-col"><label>ATC Code</label><input className={cn(inp, "w-14")} /></div>
+                  <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" defaultChecked className="w-3 h-3" /> Drug Code</label><input className={cn(inp, "w-20")} /></div>
+                  <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" className="w-3 h-3" /> Medicinal Prod ID</label><input className={cn(inp, "w-28")} /></div>
+                  <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" className="w-3 h-3" /> Trade Name</label><input className={cn(inp, "w-28")} defaultValue="" /></div>
+                  <div className="flex flex-col"><label className="flex items-center gap-1"><input type="radio" className="w-3 h-3" /> Ingredient</label><input className={cn(inp, "w-20")} /></div>
+                  <div className="flex flex-col"><label>Formulation</label><input className={cn(inp, "w-14")} /></div>
+                  <div className="flex flex-col"><label>Country</label><input className={cn(inp, "w-14")} /></div>
+
+                  {/* Search / Clear Controls */}
+                  <div className="flex flex-col gap-1 ml-auto">
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1"><input type="checkbox" className="w-3 h-3" /> Full Search</label>
+                      <button className="h-[18px] px-3 text-[9px] bg-gray-100 border border-gray-400">Clear</button>
+                    </div>
+                    <button className="h-[18px] px-3 text-[9px] bg-gray-100 border border-gray-400 self-end">Search</button>
+                  </div>
+                </div>
+                <div className="border border-gray-300 h-[150px] overflow-auto">
+                  <table className="w-full text-[10px] text-left">
+                    <thead className="sticky top-0 bg-slate-50 border-b border-gray-300 text-gray-700">
+                      <tr>
+                        <th className="px-1 py-1 font-bold">Trade Name <span className="text-amber-500">▲</span></th>
+                        <th className="px-1 py-1 font-bold">Formulation / Strength</th>
+                        <th className="px-1 py-1 font-bold">Sales Country</th>
+                        <th className="px-1 py-1 font-bold">Generic?</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-slate-50"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM /01479302/</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
+                      <tr className="bg-white"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM /01479303/</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
+                      <tr className="bg-white"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM HP</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
+                      <tr className="bg-slate-50"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM I.V.</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
+                      <tr className="bg-white"><td className="px-1 py-0.5 border-b border-gray-200">NEXIUM-MUPS /01479302/</td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td><td className="px-1 py-0.5 border-b border-gray-200 border-l"></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="border border-slate-200 mt-2">
+                  <div className="bg-slate-50 px-2 py-0.5 text-[11px] font-bold border-b border-slate-200">Drug Detail</div>
+                  <div className="p-1 grid grid-cols-[100px_1fr] gap-x-2 gap-y-1 items-center bg-slate-50">
+                    <label className={lbl}>Trade Name</label>
+                    <div className="flex gap-2"><input className={cn(inp, "bg-white flex-1")} defaultValue="" /><input className={cn(inp, "bg-white flex-1")} defaultValue="" /></div>
+                    <label className={lbl}>MAH</label><input className={cn(inp, "bg-white")} defaultValue="" />
+                    <label className={lbl}>Drug Code</label>
+                    <div className="flex gap-2 items-center">
+                      <input className={cn(inp, "bg-white flex-1")} defaultValue="" />
+                      <label className={lbl}>ATC Code</label><input className={cn(inp, "bg-white w-24")} defaultValue="" />
+                      <label className={lbl}>ATC Description</label><input className={cn(inp, "bg-white flex-1")} defaultValue="" />
+                    </div>
+                    <label className={lbl}>Medicinal Product ID</label><input className={cn(inp, "bg-white")} />
+                    <label className={lbl}>Ingredients</label><input className={cn(inp, "bg-white")} defaultValue="" />
+                  </div>
+                </div>
+              </div>
+              <div className="bg-slate-50 p-1.5 flex justify-center gap-2 border-t border-slate-200">
+                <button onClick={() => setIsWhoDrugModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Select</button>
+                <button onClick={() => setIsWhoDrugModalOpen(false)} className="h-[20px] px-4 text-[10px] bg-white border border-gray-400 hover:bg-gray-50">Cancel</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Close Prompt Modal */}
-      {showClosePrompt && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
-          <div className="bg-white w-[350px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
-            <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
-              <span className="text-white font-bold text-[11px] tracking-wide">Argus Safety Web -- Webpage Dialog</span>
-              <button onClick={() => setShowClosePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
-            </div>
-            <div className="bg-white border-b border-gray-400 p-6 flex items-center gap-4">
-              <div className="text-[32px] text-blue-600 leading-none pb-2">?</div>
-              <div className="text-[12px] text-black">Save changes to Case?</div>
-            </div>
-            <div className="bg-slate-50 px-4 py-2 flex justify-center gap-2 border-b border-gray-400">
-              <button onClick={() => {
-                setShowClosePrompt(false);
-                window.dispatchEvent(new CustomEvent('save_case'));
-                setTimeout(() => {
-                  setShowRoutePrompt(true);
-                }, 1000);
-              }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Yes</button>
-              <button onClick={() => {
-                setShowClosePrompt(false);
-                setShowRoutePrompt(true);
-              }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">No</button>
-              <button onClick={() => setShowClosePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
+        {/* Save Success Modal */}
+        {showSaveSuccess && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
+            <div className="bg-slate-50 w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
+              {/* Title Bar */}
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
+                <div className="flex items-center gap-1.5 text-white font-bold text-[12px] tracking-wide">
+                  <span>Argus Safety - Webpage Dialog</span>
+                </div>
+                <button onClick={() => setShowSaveSuccess(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[20px] h-[20px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
+              </div>
+
+              <div className="p-4 bg-white flex-1 min-h-[100px] flex gap-3 relative">
+                <div className="text-[32px] leading-none select-none drop-shadow-md">ℹ️</div>
+                <div className="text-[12px] font-sans pt-2">
+                  Case {caseData?.case_number || '2010NA000028'} was saved successfully.
+                </div>
+              </div>
+
+              <div className="bg-slate-50 px-4 py-2 border-t border-gray-300 flex justify-center gap-2">
+                <button onClick={() => setShowSaveSuccess(false)} className="px-5 py-0.5 border border-gray-400 bg-white hover:bg-slate-50 text-[11px] shadow-sm">OK</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Route Prompt Modal */}
-      {showRoutePrompt && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
-          <div className="bg-white w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
-            <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
-              <span className="text-white font-bold text-[11px] tracking-wide">Route Case</span>
-              <button onClick={() => setShowRoutePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
+        {/* Print Case Modal */}
+        {showPrintModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
+            <div className="bg-white w-[600px] border-[2px] border-slate-200 rounded-sm shadow-xl flex flex-col font-tahoma overflow-hidden">
+              {/* Title Bar */}
+              <div className="bg-gradient-to-b from--emerald-200 to--slate-200 px-2 py-1 flex justify-between items-center border-b border-white">
+                <span className="text-white font-bold text-[11px] tracking-wide">Print Case</span>
+                <button onClick={() => setShowPrintModal(false)} className="text-white hover:text-red-200 leading-none text-[12px] font-bold">✕</button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex px-2 pt-1 bg-white gap-0.5 border-b border-gray-400 mt-1">
+                <div className="px-3 py-0.5 text-[11px] font-bold bg-white text-black border border-gray-400 border-b-white z-10 translate-y-[1px]">Print</div>
+              </div>
+
+              {/* Content area */}
+              <div className="bg-white border-t border-gray-400 p-8 border-b">
+                <div className="flex flex-col gap-3">
+                  <label className="flex items-center gap-2 text-[11px] text-gray-800 font-bold cursor-pointer">
+                    <input type="checkbox" checked={printCioms} onChange={(e) => setPrintCioms(e.target.checked)} className="w-3 h-3 accent-gray-500" /> CIOMS Format
+                  </label>
+                  <label className="flex items-center gap-2 text-[11px] text-gray-800 font-bold cursor-pointer">
+                    <input type="checkbox" checked={printAdr} onChange={(e) => setPrintAdr(e.target.checked)} className="w-3 h-3 accent-gray-500" /> ADR Format
+                  </label>
+                </div>
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="bg-white px-4 py-3 flex justify-center gap-3">
+                <button onClick={() => {
+                  setShowPrintModal(false);
+                  const onsetDateStr = eventTabs[0]?.dateOfOnset || '';
+                  let onsetDay = '', onsetMonth = '', onsetYear = '';
+                  if (onsetDateStr && onsetDateStr !== '00-MMM-0000') {
+                    const parts = onsetDateStr.split('-');
+                    if (parts.length === 3) {
+                      onsetDay = parts[0];
+                      onsetMonth = parts[1];
+                      onsetYear = parts[2];
+                    }
+                  }
+                  const p = productTabs[0] || {};
+                  const therapyDates = [p.dosageStartDate, p.dosageStopDate].filter(Boolean).join(' to ');
+                  const dailyDose = [p.concentration, p.units].filter(Boolean).join(' ');
+                  const concomitant = productTabs.filter(pt => pt.role === 'Concomitant').map(pt => pt.name || pt.genericName).join(', ');
+                  const history = form.patMedicalHistory || form.parentMedicalHistory || '';
+                  const indication = p.indications && p.indications.length > 0 ? p.indications[0].reported : '';
+
+                  const pdfData = {
+                    initials: form.patInitials || '',
+                    country: form.patCountry || caseData?.country || '',
+                    age: form.patAge ? `${form.patAge} ${form.patAgeUnits || ''}`.trim() : '',
+                    sex: form.patGender || '',
+                    weight: form.patWeight ? `${form.patWeight} ${form.patWeightUnits || ''}`.trim() : '',
+                    description: form.caseNarrative || "",
+                    onsetDay,
+                    onsetMonth,
+                    onsetYear,
+                    suspectDrug: p.name || p.genericName || '',
+                    route: p.route || p.formulation || '',
+                    dailyDose,
+                    therapyDates,
+                    manufacturer: p.labeler || '',
+                    indication,
+                    concomitant,
+                    history,
+                    controlNo: caseData?.case_number || '',
+                    dateReceived: form.caseReceiptDate || '',
+                    reporterName: form.firstName || form.lastName ? `${form.firstName || ''} ${form.lastName || ''}`.trim() : '',
+                    reportDate: new Date().toLocaleDateString('en-GB').replace(/\//g, '-').toUpperCase()
+                  };
+
+                  if (printCioms) generateCiomsPdf(pdfData);
+                  if (printAdr) generateAdrPdf(pdfData);
+                }} className="px-4 py-0.5 text-[10px] bg-white border border-gray-400 text-gray-800 hover:bg-gray-50 shadow-sm">Print</button>
+                <button onClick={() => setShowPrintModal(false)} className="px-4 py-0.5 text-[10px] bg-white border border-gray-400 text-gray-800 hover:bg-gray-50 shadow-sm">Cancel</button>
+              </div>
             </div>
-            <div className="bg-white border-b border-gray-400 p-6 flex flex-col gap-4">
-              <div className="flex items-center gap-4">
+          </div>
+        )}
+
+        {/* Case Details Modal */}
+        {showCaseDetailsModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
+            <div className="bg-white w-[600px] border-[2px] border-slate-200 rounded-sm shadow-xl flex flex-col font-tahoma overflow-hidden">
+              <div className="bg-gradient-to-b from--emerald-200 to--slate-200 px-2 py-1 flex justify-between items-center border-b border-white">
+                <span className="text-white font-bold text-[11px] tracking-wide">Case Details</span>
+                <button onClick={() => setShowCaseDetailsModal(false)} className="text-white hover:text-red-200 leading-none text-[12px] font-bold">✕</button>
+              </div>
+              <div className="bg-white border-t border-gray-400 p-2 min-h-[300px] max-h-[60vh] overflow-y-auto">
+                <div className="font-sans text-[11px]">
+                  <div className="flex items-center gap-1 mb-1">
+                    <span className="w-3 h-3 flex items-center justify-center border border-gray-400 text-[9px] cursor-pointer bg-white leading-none">-</span>
+                    <span className="text-yellow-500">📁</span>
+                    <span>Revisions</span>
+                  </div>
+                  <div className="pl-5 flex flex-col text-[10px]">
+                    <div className="flex items-center gap-1 mb-1 w-fit pr-1">
+                      <span className="text-gray-500 border border-gray-400 px-0.5 text-[8px]">📄</span>
+                      <span className="text-black">Revision History</span>
+                    </div>
+                    {(() => {
+                      const uniqueRevs = Array.from(new Set(revisions.map(r => r.rev))).map(revNum => revisions.find(r => r.rev === revNum));
+                      return (
+                        <>
+                          {loadingRevisions ? (
+                            <div className="pl-4 py-1 text-gray-500 italic">Loading...</div>
+                          ) : uniqueRevs.length === 0 ? (
+                            <div className="pl-4 py-1 text-gray-500 italic">No revision history found.</div>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-[80px_100px_20px_100px_1fr] gap-2 mb-1 border-b border-gray-300 font-bold text-gray-600 mt-1 pb-1">
+                                <span>Case Number</span>
+                                <span>Revision Date</span>
+                                <span>Rev</span>
+                                <span>User</span>
+                                <span>Action/Entity</span>
+                              </div>
+                              {uniqueRevs.map((rev, idx) => (
+                                <div key={idx} className="grid grid-cols-[80px_100px_20px_100px_1fr] gap-2 mb-1 hover:bg-blue-50 cursor-pointer">
+                                  <span className="flex items-center gap-1 text-gray-500"><span className="text-[8px]">▶</span> <span className="text-black">{caseData?.case_number || 'Case'}</span></span>
+                                  <span>{rev.time}</span>
+                                  <span>{rev.rev}</span>
+                                  <span className="truncate" title={rev.user}>{rev.user}</span>
+                                  <span className="truncate" title={rev.parent}>{rev.parent}</span>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white px-4 py-2 flex justify-end border-t border-gray-400">
+                <button onClick={() => setShowCaseDetailsModal(false)} className="px-5 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Validation Warnings Modal */}
+        {showValidationModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-transparent">
+            <div className="absolute top-[20%] right-[10%] bg-white w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
+              {/* Title Bar */}
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
+                <div className="flex items-center gap-1 text-white font-bold text-[11px] tracking-wide">
+                  <span>Argus Safety - Case Form Validations -- Webpage Dialog</span>
+                </div>
+                <button onClick={() => setShowValidationModal(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
+              </div>
+
+              {/* Fake URL Bar */}
+              <div className="bg-white border-b border-gray-400 px-2 py-0.5 text-[10px] text-gray-600 flex items-center gap-1">
+                <span className="text-blue-600 text-[12px]">🌐</span> http://172.16.12.102:8083/ArgusNET/CommonWebUIComponent/Error/...
+              </div>
+
+              {/* Content */}
+              <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-0.5 text-[11px] font-bold border-b border-emerald-100">Case Form Validations</div>
+              <div className="bg-white border-b border-gray-400 p-4 flex gap-3 min-h-[140px] max-h-[300px] overflow-y-auto">
+                <div className="text-[28px] leading-none drop-shadow-sm select-none">{validationErrors.length > 0 ? '⚠️' : '✅'}</div>
+                <div className="text-[11px] font-sans w-full">
+                  <div className="font-bold mb-1 text-gray-800">{validationErrors.length > 0 ? 'Warnings:' : 'Success:'}</div>
+                  {validationErrors.length > 0 ? (
+                    <ul className="text-gray-700 list-disc pl-4 space-y-1">
+                      {validationErrors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-gray-700">No validation warnings found. Case is valid.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-b border-gray-400">
+                <div></div>
+                <div className="flex gap-2">
+                  <button className="px-5 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Copy</button>
+                  <button onClick={() => setShowValidationModal(false)} className="px-5 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">OK</button>
+                </div>
+              </div>
+              <div className="bg-slate-50 px-2 py-0.5 text-[9px] text-gray-600 flex items-center gap-1">
+                <span className="text-[10px]">🌐</span> Internet
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Close Prompt Modal */}
+        {showClosePrompt && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
+            <div className="bg-white w-[350px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
+                <span className="text-white font-bold text-[11px] tracking-wide">Argus Safety Web -- Webpage Dialog</span>
+                <button onClick={() => setShowClosePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
+              </div>
+              <div className="bg-white border-b border-gray-400 p-6 flex items-center gap-4">
                 <div className="text-[32px] text-blue-600 leading-none pb-2">?</div>
-                <div className="text-[12px] text-black">Select User to Route for QC:</div>
+                <div className="text-[12px] text-black">Save changes to Case?</div>
               </div>
-              <select className={sel} value={selectedAssignee} onChange={(e) => setSelectedAssignee(e.target.value)}>
-                <option value="">-- Select User --</option>
-                {orgUsers.map(u => (
-                  <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
-                ))}
-              </select>
-              <textarea 
-                className="w-full h-16 border border-slate-300 rounded p-1 text-[11px]" 
-                placeholder="Routing comments..."
-                value={routeComments}
-                onChange={(e) => setRouteComments(e.target.value)}
-              />
+              <div className="bg-slate-50 px-4 py-2 flex justify-center gap-2 border-b border-gray-400">
+                <button onClick={() => {
+                  setShowClosePrompt(false);
+                  window.dispatchEvent(new CustomEvent('save_case'));
+                  setTimeout(() => {
+                    setShowRoutePrompt(true);
+                  }, 1000);
+                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Yes</button>
+                <button onClick={() => {
+                  setShowClosePrompt(false);
+                  setShowRoutePrompt(true);
+                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">No</button>
+                <button onClick={() => setShowClosePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
+              </div>
             </div>
-            <div className="bg-slate-50 px-4 py-2 flex justify-center gap-2 border-b border-gray-400">
-              <button onClick={() => {
-                if (!selectedAssignee) return alert("Please select a user to route to.");
-                api.post(`/cases/${id}/route`, { assigned_to: selectedAssignee, comments: routeComments })
-                  .then(() => {
-                    setShowRoutePrompt(false);
-                    navigate('/workflow?filter=new');
-                  })
-                  .catch(err => {
-                    console.error("Routing error:", err);
-                    alert("Failed to route case");
-                  });
-              }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Route</button>
-              <button onClick={() => setShowRoutePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
+          </div>
+        )}
+
+        {/* Route Prompt Modal */}
+        {showRoutePrompt && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
+            <div className="bg-white w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
+                <span className="text-white font-bold text-[11px] tracking-wide">Route Case</span>
+                <button onClick={() => setShowRoutePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
+              </div>
+              <div className="bg-white border-b border-gray-400 p-6 flex flex-col gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="text-[32px] text-blue-600 leading-none pb-2">?</div>
+                  <div className="text-[12px] text-black">Select User to Route for QC:</div>
+                </div>
+                <select className={sel} value={selectedAssignee} onChange={(e) => setSelectedAssignee(e.target.value)}>
+                  <option value="">-- Select User --</option>
+                  {orgUsers.map(u => (
+                    <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
+                  ))}
+                </select>
+                <textarea
+                  className="w-full h-16 border border-slate-300 rounded p-1 text-[11px]"
+                  placeholder="Routing comments..."
+                  value={routeComments}
+                  onChange={(e) => setRouteComments(e.target.value)}
+                />
+              </div>
+              <div className="bg-slate-50 px-4 py-2 flex justify-center gap-2 border-b border-gray-400">
+                <button onClick={() => {
+                  if (!selectedAssignee) return alert("Please select a user to route to.");
+                  api.post(`/cases/${id}/route`, { assigned_to: selectedAssignee, comments: routeComments })
+                    .then(() => {
+                      setShowRoutePrompt(false);
+                      navigate('/workflow?filter=new');
+                    })
+                    .catch(err => {
+                      console.error("Routing error:", err);
+                      alert("Failed to route case");
+                    });
+                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Route</button>
+                <button onClick={() => setShowRoutePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* Printable PDF Layouts */}
+      {printLayout === 'case_form' && (
+        <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
+          {/* Header */}
+          <div className="flex justify-between items-end border-b-2 border-gray-400 pb-1 mb-2">
+            <div className="w-[200px] border border-gray-400 p-1 flex justify-center text-red-600 font-bold text-lg tracking-tighter shadow-sm bg-gray-50">
+              ORACLE<br /><span className="text-[10px] text-gray-500 font-normal leading-none tracking-normal">HEALTH SCIENCES</span>
+            </div>
+            <div className="flex flex-col items-end">
+              <h1 className="text-blue-800 text-xl font-bold">Case Record</h1>
+              <span className="text-[10px] text-gray-500">28-Jul-2011 01:58 GMT-4:000000</span>
+            </div>
+          </div>
+
+          <h2 className="text-blue-800 text-lg mb-2">Case Number {caseData?.case_number || '2010EU000009'}</h2>
+
+          {/* Main Border Box */}
+          <div className="border-[2px] border-black">
+
+            {/* Top Info Section */}
+            <div className="flex border-b-[2px] border-black h-24">
+              <div className="w-1/2 p-4 flex items-center justify-center border-r-[2px] border-black">
+                {/* Barcode Mockup */}
+                <div className="font-barcode text-5xl tracking-widest bg-gray-100 px-4 py-2 w-full text-center">||| | ||||| |||| | |||||||</div>
+              </div>
+              <div className="w-1/2 p-1 text-[10px] grid grid-cols-2 gap-y-1 content-center">
+                <div className="font-bold">Case ID:</div><div className="text-right pr-2">100078</div>
+                <div className="font-bold">Received On:</div><div className="text-right pr-2">20-OCT-2010</div>
+                <div className="font-bold">Initial Case User:</div><div className="text-right pr-2">Data Entry 2 (EU)</div>
+                <div className="font-bold">Initial Case Site:</div><div className="text-right pr-2">European Union</div>
+              </div>
+            </div>
+
+            {/* General Information */}
+            <div className="bg-gray-200 border-b border-black px-1 font-bold text-[11px]">General Information</div>
+            <div className="p-1 border-b border-black grid grid-cols-5 text-[10px] gap-2">
+              <div><div className="font-bold">Report Type</div><div>Spontaneous</div></div>
+              <div><div className="font-bold">Case Country</div><div>GERMANY</div></div>
+              <div><div className="font-bold">Initial Receipt Date</div><div>20-OCT-2010</div></div>
+              <div><div className="font-bold">Safety Receipt Date</div><div>21-OCT-2010</div></div>
+              <div><div className="font-bold">Case Status</div><div>Data Entry</div></div>
+            </div>
+            <div className="p-1 border-b border-black text-[10px] min-h-[30px]">
+              <div className="font-bold">Initial Justification</div>
+            </div>
+            <div className="p-1 border-b border-black grid grid-cols-2 text-[10px] min-h-[40px]">
+              <div><div className="font-bold flex items-center gap-1"><input type="checkbox" className="w-3 h-3" /> Case Requires Follow-up</div></div>
+              <div><div className="font-bold">Classification</div></div>
+            </div>
+
+            {/* Follow-up Log */}
+            <div className="bg-gray-200 border-b border-black px-1 font-bold text-[11px]">Follow-up Log</div>
+            <div className="p-1 border-b border-black text-[10px] text-center font-bold">
+              No Information Present
+            </div>
+
+            {/* Reporter Information */}
+            <div className="bg-gray-200 border-b border-black px-1 font-bold text-[11px]">Reporter Information</div>
+            <div className="p-1 text-[10px] grid grid-cols-4 gap-2">
+              <div className="col-span-1">
+                <div className="flex gap-2 font-bold mb-1"><span>1</span><span>Name</span></div>
+                <div className="pl-4">Andrea Mueller</div>
+              </div>
+              <div className="col-span-2">
+                <div className="font-bold mb-1">Occupation</div>
+                <div className="h-8"></div>
+              </div>
+              <div className="col-span-1 text-right pr-2">
+                <div className="font-bold mb-1">Health Care Professional</div>
+                <div>No</div>
+              </div>
+              <div className="col-span-2 border-t border-gray-300 pt-1 mt-1">
+                <div className="font-bold">Institution</div>
+              </div>
+              <div className="col-span-2 border-t border-gray-300 pt-1 mt-1 text-right pr-2">
+                <div className="font-bold">Reporter ID</div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-    </div>
+      {printLayout === 'medical_summary' && (
+        <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
+          <h1 className="text-center font-bold text-[14px] mb-4">Medical Summary</h1>
+          <h2 className="font-bold text-[12px] mb-2 border-b-2 border-black pb-1">Case Number: {caseData?.case_number || '2010EU000009'}</h2>
 
-    {/* Printable PDF Layouts */}
-    {printLayout === 'case_form' && (
-      <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
-        {/* Header */}
-        <div className="flex justify-between items-end border-b-2 border-gray-400 pb-1 mb-2">
-          <div className="w-[200px] border border-gray-400 p-1 flex justify-center text-red-600 font-bold text-lg tracking-tighter shadow-sm bg-gray-50">
-            ORACLE<br/><span className="text-[10px] text-gray-500 font-normal leading-none tracking-normal">HEALTH SCIENCES</span>
-          </div>
-          <div className="flex flex-col items-end">
-            <h1 className="text-blue-800 text-xl font-bold">Case Record</h1>
-            <span className="text-[10px] text-gray-500">28-Jul-2011 01:58 GMT-4:000000</span>
-          </div>
-        </div>
-        
-        <h2 className="text-blue-800 text-lg mb-2">Case Number {caseData?.case_number || '2010EU000009'}</h2>
-
-        {/* Main Border Box */}
-        <div className="border-[2px] border-black">
-          
-          {/* Top Info Section */}
-          <div className="flex border-b-[2px] border-black h-24">
-            <div className="w-1/2 p-4 flex items-center justify-center border-r-[2px] border-black">
-              {/* Barcode Mockup */}
-              <div className="font-barcode text-5xl tracking-widest bg-gray-100 px-4 py-2 w-full text-center">||| | ||||| |||| | |||||||</div>
+          <div className="grid grid-cols-2 gap-4 border-b border-black pb-2 mb-2">
+            <div>
+              <h3 className="font-bold mb-1 italic">General Case Information</h3>
+              <div className="grid grid-cols-[120px_1fr] text-[10px] gap-y-0.5">
+                <div className="font-bold">Report Type</div><div>Spontaneous</div>
+                <div className="font-bold">Initial Receipt Date</div><div>20-Oct-2010</div>
+                <div className="font-bold">Case Creation Time</div><div>20-Oct-2010 16:29</div>
+                <div className="font-bold">Case Country</div><div>GERMANY</div>
+                <div className="font-bold">Health Care Professional</div><div>No</div>
+              </div>
             </div>
-            <div className="w-1/2 p-1 text-[10px] grid grid-cols-2 gap-y-1 content-center">
-              <div className="font-bold">Case ID:</div><div className="text-right pr-2">100078</div>
-              <div className="font-bold">Received On:</div><div className="text-right pr-2">20-OCT-2010</div>
-              <div className="font-bold">Initial Case User:</div><div className="text-right pr-2">Data Entry 2 (EU)</div>
-              <div className="font-bold">Initial Case Site:</div><div className="text-right pr-2">European Union</div>
+            <div>
+              <h3 className="font-bold mb-1 italic">Patient Information</h3>
+              <div className="grid grid-cols-[100px_1fr] text-[10px] gap-y-0.5">
+                <div className="font-bold">Age</div><div>21 Years</div>
+                <div className="font-bold">Date of Birth</div><div>08-NOV-1988</div>
+                <div className="font-bold">Weight</div><div>90.700 kg</div>
+              </div>
             </div>
           </div>
 
-          {/* General Information */}
-          <div className="bg-gray-200 border-b border-black px-1 font-bold text-[11px]">General Information</div>
-          <div className="p-1 border-b border-black grid grid-cols-5 text-[10px] gap-2">
-            <div><div className="font-bold">Report Type</div><div>Spontaneous</div></div>
-            <div><div className="font-bold">Case Country</div><div>GERMANY</div></div>
-            <div><div className="font-bold">Initial Receipt Date</div><div>20-OCT-2010</div></div>
-            <div><div className="font-bold">Safety Receipt Date</div><div>21-OCT-2010</div></div>
-            <div><div className="font-bold">Case Status</div><div>Data Entry</div></div>
-          </div>
-          <div className="p-1 border-b border-black text-[10px] min-h-[30px]">
-            <div className="font-bold">Initial Justification</div>
-          </div>
-          <div className="p-1 border-b border-black grid grid-cols-2 text-[10px] min-h-[40px]">
-            <div><div className="font-bold flex items-center gap-1"><input type="checkbox" className="w-3 h-3" /> Case Requires Follow-up</div></div>
-            <div><div className="font-bold">Classification</div></div>
+          <div className="border-b border-black pb-2 mb-2">
+            <h3 className="font-bold mb-1 italic">Reporter Information</h3>
+            <div className="grid grid-cols-[120px_1fr] text-[10px]">
+              <div className="font-bold">Reporter Type</div><div>Consumer</div>
+            </div>
           </div>
 
-          {/* Follow-up Log */}
-          <div className="bg-gray-200 border-b border-black px-1 font-bold text-[11px]">Follow-up Log</div>
-          <div className="p-1 border-b border-black text-[10px] text-center font-bold">
-            No Information Present
-          </div>
-
-          {/* Reporter Information */}
-          <div className="bg-gray-200 border-b border-black px-1 font-bold text-[11px]">Reporter Information</div>
-          <div className="p-1 text-[10px] grid grid-cols-4 gap-2">
-            <div className="col-span-1">
-              <div className="flex gap-2 font-bold mb-1"><span>1</span><span>Name</span></div>
-              <div className="pl-4">Andrea Mueller</div>
-            </div>
-            <div className="col-span-2">
-              <div className="font-bold mb-1">Occupation</div>
-              <div className="h-8"></div>
-            </div>
-            <div className="col-span-1 text-right pr-2">
-              <div className="font-bold mb-1">Health Care Professional</div>
-              <div>No</div>
-            </div>
-            <div className="col-span-2 border-t border-gray-300 pt-1 mt-1">
-              <div className="font-bold">Institution</div>
-            </div>
-            <div className="col-span-2 border-t border-gray-300 pt-1 mt-1 text-right pr-2">
-              <div className="font-bold">Reporter ID</div>
+          <div className="border-b border-black pb-2 mb-2">
+            <h3 className="font-bold mb-1 italic">Narrative / Comment</h3>
+            <div className="grid grid-cols-[120px_1fr] text-[10px]">
+              <div className="font-bold">Case Serious</div><div>Yes</div>
             </div>
           </div>
-        </div>
-      </div>
-    )}
 
-    {printLayout === 'medical_summary' && (
-      <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
-        <h1 className="text-center font-bold text-[14px] mb-4">Medical Summary</h1>
-        <h2 className="font-bold text-[12px] mb-2 border-b-2 border-black pb-1">Case Number: {caseData?.case_number || '2010EU000009'}</h2>
-        
-        <div className="grid grid-cols-2 gap-4 border-b border-black pb-2 mb-2">
           <div>
-            <h3 className="font-bold mb-1 italic">General Case Information</h3>
-            <div className="grid grid-cols-[120px_1fr] text-[10px] gap-y-0.5">
-              <div className="font-bold">Report Type</div><div>Spontaneous</div>
-              <div className="font-bold">Initial Receipt Date</div><div>20-Oct-2010</div>
-              <div className="font-bold">Case Creation Time</div><div>20-Oct-2010 16:29</div>
-              <div className="font-bold">Case Country</div><div>GERMANY</div>
-              <div className="font-bold">Health Care Professional</div><div>No</div>
-            </div>
+            <h3 className="font-bold mb-1 italic">Medications - Suspect</h3>
+            <table className="w-full text-left text-[9px] border-collapse border border-black mb-1">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th className="border border-black px-1 py-0.5 w-4">#</th>
+                  <th className="border border-black px-1 py-0.5">Product Name<br />Generic Name</th>
+                  <th className="border border-black px-1 py-0.5">Reported Indication</th>
+                  <th className="border border-black px-1 py-0.5">Duration of<br />Administration</th>
+                  <th className="border border-black px-1 py-0.5">Total Dosage<br />Total Dose to<br />Primary Event</th>
+                  <th className="border border-black px-1 py-0.5">Time Between First<br />Dose/Primary Event<br />Time between Last<br />Dose/Primary Event</th>
+                  <th className="border border-black px-1 py-0.5">Action Taken</th>
+                  <th className="border border-black px-1 py-0.5">Dechallenge<br />Results<br />Rechallenge<br />Results</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="border border-black px-1 py-0.5 align-top">1</td>
+                  <td className="border border-black px-1 py-0.5 align-top">(not reported)<br /><br /></td>
+                  <td className="border border-black px-1 py-0.5 align-top"></td>
+                  <td className="border border-black px-1 py-0.5 align-top"></td>
+                  <td className="border border-black px-1 py-0.5 align-top"></td>
+                  <td className="border border-black px-1 py-0.5 align-top"></td>
+                  <td className="border border-black px-1 py-0.5 align-top"></td>
+                  <td className="border border-black px-1 py-0.5 align-top">Unk<br />Unk</td>
+                </tr>
+              </tbody>
+            </table>
+            <div className="text-[9px] font-bold">Dosage Regimens:</div>
+            <div className="text-[9px] pl-4 italic">No Information present</div>
           </div>
-          <div>
-            <h3 className="font-bold mb-1 italic">Patient Information</h3>
-            <div className="grid grid-cols-[100px_1fr] text-[10px] gap-y-0.5">
-              <div className="font-bold">Age</div><div>21 Years</div>
-              <div className="font-bold">Date of Birth</div><div>08-NOV-1988</div>
-              <div className="font-bold">Weight</div><div>90.700 kg</div>
+        </div>
+      )}
+
+      {printLayout === 'cioms_format' && (
+        <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
+          <h1 className="text-center font-bold text-[16px] mb-4 tracking-wider">CIOMS FORM</h1>
+          <div className="border-[2px] border-black p-4 bg-white shadow-sm">
+            <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">I. REACTION INFORMATION</h2>
+            <div className="grid grid-cols-2 gap-6 mb-6 px-2">
+              <div className="space-y-1">
+                <div className="font-bold text-[10px] text-gray-700">1. PATIENT INITIALS</div>
+                <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">A. M.</div>
+              </div>
+              <div className="space-y-1">
+                <div className="font-bold text-[10px] text-gray-700">2. COUNTRY</div>
+                <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">GERMANY</div>
+              </div>
+              <div className="space-y-1">
+                <div className="font-bold text-[10px] text-gray-700">3. DATE OF BIRTH</div>
+                <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">08-NOV-1988</div>
+              </div>
+              <div className="space-y-1">
+                <div className="font-bold text-[10px] text-gray-700">4. AGE</div>
+                <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">21 Years</div>
+              </div>
+            </div>
+
+            <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">II. SUSPECT DRUG(S) INFORMATION</h2>
+            <div className="mb-6 px-2 space-y-1">
+              <div className="font-bold text-[10px] text-gray-700">14. SUSPECT DRUG(S) (include generic name)</div>
+              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">Wonder Drug (EU)</div>
+            </div>
+
+            <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">III. CONCOMITANT DRUG(S) AND HISTORY</h2>
+            <div className="mb-6 h-12 border-b border-gray-400 px-2 space-y-1">
+              <div className="font-bold text-[10px] text-gray-700">22. CONCOMITANT DRUG(S)</div>
+            </div>
+
+            <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">IV. MANUFACTURER INFORMATION</h2>
+            <div className="mb-4 h-12 border-b border-gray-400 px-2 space-y-1">
+              <div className="font-bold text-[10px] text-gray-700">24. NAME AND ADDRESS OF MANUFACTURER</div>
+              <div className="font-semibold text-gray-900 pl-1">ORACLE HEALTH SCIENCES</div>
             </div>
           </div>
         </div>
+      )}
 
-        <div className="border-b border-black pb-2 mb-2">
-          <h3 className="font-bold mb-1 italic">Reporter Information</h3>
-          <div className="grid grid-cols-[120px_1fr] text-[10px]">
-            <div className="font-bold">Reporter Type</div><div>Consumer</div>
-          </div>
-        </div>
-
-        <div className="border-b border-black pb-2 mb-2">
-          <h3 className="font-bold mb-1 italic">Narrative / Comment</h3>
-          <div className="grid grid-cols-[120px_1fr] text-[10px]">
-            <div className="font-bold">Case Serious</div><div>Yes</div>
-          </div>
-        </div>
-
-        <div>
-          <h3 className="font-bold mb-1 italic">Medications - Suspect</h3>
-          <table className="w-full text-left text-[9px] border-collapse border border-black mb-1">
-            <thead>
-              <tr className="bg-gray-200">
-                <th className="border border-black px-1 py-0.5 w-4">#</th>
-                <th className="border border-black px-1 py-0.5">Product Name<br/>Generic Name</th>
-                <th className="border border-black px-1 py-0.5">Reported Indication</th>
-                <th className="border border-black px-1 py-0.5">Duration of<br/>Administration</th>
-                <th className="border border-black px-1 py-0.5">Total Dosage<br/>Total Dose to<br/>Primary Event</th>
-                <th className="border border-black px-1 py-0.5">Time Between First<br/>Dose/Primary Event<br/>Time between Last<br/>Dose/Primary Event</th>
-                <th className="border border-black px-1 py-0.5">Action Taken</th>
-                <th className="border border-black px-1 py-0.5">Dechallenge<br/>Results<br/>Rechallenge<br/>Results</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="border border-black px-1 py-0.5 align-top">1</td>
-                <td className="border border-black px-1 py-0.5 align-top">(not reported)<br/><br/></td>
-                <td className="border border-black px-1 py-0.5 align-top"></td>
-                <td className="border border-black px-1 py-0.5 align-top"></td>
-                <td className="border border-black px-1 py-0.5 align-top"></td>
-                <td className="border border-black px-1 py-0.5 align-top"></td>
-                <td className="border border-black px-1 py-0.5 align-top"></td>
-                <td className="border border-black px-1 py-0.5 align-top">Unk<br/>Unk</td>
-              </tr>
-            </tbody>
-          </table>
-          <div className="text-[9px] font-bold">Dosage Regimens:</div>
-          <div className="text-[9px] pl-4 italic">No Information present</div>
-        </div>
-      </div>
-    )}
-
-    {printLayout === 'cioms_format' && (
-      <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
-        <h1 className="text-center font-bold text-[16px] mb-4 tracking-wider">CIOMS FORM</h1>
-        <div className="border-[2px] border-black p-4 bg-white shadow-sm">
-          <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">I. REACTION INFORMATION</h2>
-          <div className="grid grid-cols-2 gap-6 mb-6 px-2">
-            <div className="space-y-1">
-              <div className="font-bold text-[10px] text-gray-700">1. PATIENT INITIALS</div>
-              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">A. M.</div>
+      {printLayout === 'adr_format' && (
+        <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
+          <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-6">
+            <div>
+              <h1 className="font-bold text-[18px] text-blue-900">SUSPECTED ADVERSE DRUG REACTION REPORTING FORM</h1>
+              <p className="text-[10px] text-gray-600 mt-1">For VOLUNTARY reporting of Adverse Drug Reactions by Healthcare Professionals</p>
             </div>
-            <div className="space-y-1">
-              <div className="font-bold text-[10px] text-gray-700">2. COUNTRY</div>
-              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">GERMANY</div>
-            </div>
-            <div className="space-y-1">
-              <div className="font-bold text-[10px] text-gray-700">3. DATE OF BIRTH</div>
-              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">08-NOV-1988</div>
-            </div>
-            <div className="space-y-1">
-              <div className="font-bold text-[10px] text-gray-700">4. AGE</div>
-              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">21 Years</div>
+            <div className="text-right">
+              <div className="border border-black p-2 text-center bg-gray-50">
+                <span className="font-bold text-[10px] block">FOR OFFICE USE ONLY</span>
+                <span className="text-[10px]">ADR No. 100078</span>
+              </div>
             </div>
           </div>
-          
-          <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">II. SUSPECT DRUG(S) INFORMATION</h2>
-          <div className="mb-6 px-2 space-y-1">
-            <div className="font-bold text-[10px] text-gray-700">14. SUSPECT DRUG(S) (include generic name)</div>
-            <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">Wonder Drug (EU)</div>
-          </div>
-          
-          <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">III. CONCOMITANT DRUG(S) AND HISTORY</h2>
-          <div className="mb-6 h-12 border-b border-gray-400 px-2 space-y-1">
-            <div className="font-bold text-[10px] text-gray-700">22. CONCOMITANT DRUG(S)</div>
-          </div>
-          
-          <h2 className="font-bold border-b border-black mb-3 pb-1 text-[13px] bg-gray-100 px-2">IV. MANUFACTURER INFORMATION</h2>
-          <div className="mb-4 h-12 border-b border-gray-400 px-2 space-y-1">
-            <div className="font-bold text-[10px] text-gray-700">24. NAME AND ADDRESS OF MANUFACTURER</div>
-            <div className="font-semibold text-gray-900 pl-1">ORACLE HEALTH SCIENCES</div>
-          </div>
-        </div>
-      </div>
-    )}
 
-    {printLayout === 'adr_format' && (
-      <div className="hidden print:block font-sans text-[12px] bg-white text-black p-8 w-full max-w-[1000px] mx-auto">
-        <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-6">
-          <div>
-            <h1 className="font-bold text-[18px] text-blue-900">SUSPECTED ADVERSE DRUG REACTION REPORTING FORM</h1>
-            <p className="text-[10px] text-gray-600 mt-1">For VOLUNTARY reporting of Adverse Drug Reactions by Healthcare Professionals</p>
-          </div>
-          <div className="text-right">
-            <div className="border border-black p-2 text-center bg-gray-50">
-              <span className="font-bold text-[10px] block">FOR OFFICE USE ONLY</span>
-              <span className="text-[10px]">ADR No. 100078</span>
+          <div className="border-[2px] border-black p-5 bg-white shadow-sm">
+            <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">1. Patient Details</h2>
+            <div className="grid grid-cols-2 gap-6 mb-6 px-2">
+              <div className="space-y-1">
+                <div className="font-bold text-[10px] text-gray-700">Patient Initials</div>
+                <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">A. M.</div>
+              </div>
+              <div className="space-y-1">
+                <div className="font-bold text-[10px] text-gray-700">Age at time of event</div>
+                <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">21 Years</div>
+              </div>
+            </div>
+
+            <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">2. Suspected Adverse Reaction</h2>
+            <div className="mb-6 px-2 space-y-1">
+              <div className="font-bold text-[10px] text-gray-700">Date of reaction started</div>
+              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">20-SEP-2010</div>
+            </div>
+
+            <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">3. Suspected Medication(s)</h2>
+            <div className="mb-6 px-2 space-y-1">
+              <div className="font-bold text-[10px] text-gray-700">Name of the drug (Brand/Generic name)</div>
+              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">Wonder Drug (EU)</div>
+            </div>
+
+            <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">4. Reporter Details</h2>
+            <div className="mb-4 px-2 space-y-1">
+              <div className="font-bold text-[10px] text-gray-700">Name and Professional Address</div>
+              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">Andrea Mueller</div>
             </div>
           </div>
         </div>
-
-        <div className="border-[2px] border-black p-5 bg-white shadow-sm">
-          <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">1. Patient Details</h2>
-          <div className="grid grid-cols-2 gap-6 mb-6 px-2">
-            <div className="space-y-1">
-              <div className="font-bold text-[10px] text-gray-700">Patient Initials</div>
-              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">A. M.</div>
+      )}
+      {/* Significant Modal */}
+      {showSignificantModal && (
+        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-[100]">
+          <div className="bg-white border border-slate-200 rounded-sm w-[400px] shadow-xl font-sans text-[11px]">
+            {/* Modal Header */}
+            <div className="bg-brand-primary text-white px-2 py-0.5 flex justify-between items-center cursor-default">
+              <div className="flex items-center gap-1">
+                <span className="text-amber-500 text-[10px] italic font-serif">e</span>
+                <span className="font-bold tracking-wide">Argus Safety -- Webpage Dialog</span>
+              </div>
+              <button onClick={() => setShowSignificantModal(false)} className="bg-white text-black w-[14px] h-[14px] flex items-center justify-center border border-t-white border-l-white border-b-gray-800 border-r-gray-800 font-bold text-[9px] leading-none active:bg-slate-100">X</button>
             </div>
-            <div className="space-y-1">
-              <div className="font-bold text-[10px] text-gray-700">Age at time of event</div>
-              <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">21 Years</div>
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-1 border-b border-emerald-100 font-bold">
+              Case Form Operations
             </div>
-          </div>
-
-          <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">2. Suspected Adverse Reaction</h2>
-          <div className="mb-6 px-2 space-y-1">
-            <div className="font-bold text-[10px] text-gray-700">Date of reaction started</div>
-            <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">20-SEP-2010</div>
-          </div>
-
-          <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">3. Suspected Medication(s)</h2>
-          <div className="mb-6 px-2 space-y-1">
-            <div className="font-bold text-[10px] text-gray-700">Name of the drug (Brand/Generic name)</div>
-            <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">Wonder Drug (EU)</div>
-          </div>
-
-          <h2 className="font-bold bg-blue-50 border-b border-black mb-3 px-2 py-1 text-[13px] text-blue-900">4. Reporter Details</h2>
-          <div className="mb-4 px-2 space-y-1">
-            <div className="font-bold text-[10px] text-gray-700">Name and Professional Address</div>
-            <div className="border-b border-gray-400 h-6 pl-1 font-semibold text-gray-900">Andrea Mueller</div>
+            {/* Modal Content */}
+            <div className="bg-white p-4 h-[120px] flex flex-col justify-between">
+              <div className="flex gap-4 mt-2">
+                <div className="text-[28px] leading-none text-yellow-400 drop-shadow-[1px_1px_1px_rgba(0,0,0,0.5)] select-none">⚠️</div>
+                <div className="text-gray-900 mt-1">Is this follow-up significant?</div>
+              </div>
+              <div className="text-right mt-4">
+                <a href="#" className="text-blue-600 underline hover:text-blue-800 text-[10px]">Copy</a>
+              </div>
+            </div>
+            {/* Modal Footer */}
+            <div className="p-2 border-t border-gray-400 flex justify-center gap-2 bg-white">
+              <button onClick={handleSignificantModalYes} className="px-6 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100 focus:outline border-black outline-1 outline-dotted outline-offset-[-3px]">Yes</button>
+              <button onClick={handleSignificantModalNo} className="px-6 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100">No</button>
+            </div>
           </div>
         </div>
-      </div>
-    )}
-    {/* Significant Modal */}
-    {showSignificantModal && (
-      <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-[100]">
-        <div className="bg-white border border-slate-200 rounded-sm w-[400px] shadow-xl font-sans text-[11px]">
-          {/* Modal Header */}
-          <div className="bg-brand-primary text-white px-2 py-0.5 flex justify-between items-center cursor-default">
-            <div className="flex items-center gap-1">
-              <span className="text-amber-500 text-[10px] italic font-serif">e</span>
-              <span className="font-bold tracking-wide">Argus Safety -- Webpage Dialog</span>
+      )}
+
+      {/* Justification Modal */}
+      {showJustificationModal && (
+        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-[100]">
+          <div className="bg-white border border-slate-200 rounded-sm w-[500px] shadow-xl font-sans text-[11px]">
+            {/* Modal Header */}
+            <div className="bg-brand-primary text-white px-2 py-0.5 flex justify-between items-center cursor-default">
+              <div className="flex items-center gap-1">
+                <span className="text-amber-500 text-[10px] italic font-serif">e</span>
+                <span className="font-bold tracking-wide">Justification -- Webpage Dialog</span>
+              </div>
+              <button onClick={() => setShowJustificationModal(false)} className="bg-white text-black w-[14px] h-[14px] flex items-center justify-center border border-t-white border-l-white border-b-gray-800 border-r-gray-800 font-bold text-[9px] leading-none active:bg-slate-100">X</button>
             </div>
-            <button onClick={() => setShowSignificantModal(false)} className="bg-white text-black w-[14px] h-[14px] flex items-center justify-center border border-t-white border-l-white border-b-gray-800 border-r-gray-800 font-bold text-[9px] leading-none active:bg-slate-100">X</button>
-          </div>
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-1 border-b border-emerald-100 font-bold">
-            Case Form Operations
-          </div>
-          {/* Modal Content */}
-          <div className="bg-white p-4 h-[120px] flex flex-col justify-between">
-            <div className="flex gap-4 mt-2">
-              <div className="text-[28px] leading-none text-yellow-400 drop-shadow-[1px_1px_1px_rgba(0,0,0,0.5)] select-none">⚠️</div>
-              <div className="text-gray-900 mt-1">Is this follow-up significant?</div>
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-1 border-b border-emerald-100 font-bold">
+              {activeJustificationRowId === 'INITIAL_JUSTIFICATION' ? 'Initial Justification' : 'Follow-up Justification'}
             </div>
-            <div className="text-right mt-4">
-              <a href="#" className="text-blue-600 underline hover:text-blue-800 text-[10px]">Copy</a>
+            {/* Modal Content */}
+            <div className="bg-white p-2 border-b border-gray-400">
+              <div className="font-bold mb-1 text-gray-900">Please enter a justification for performing this action:</div>
+              <textarea
+                className="w-full h-[150px] border border-gray-400 p-1 mb-2 resize-none focus:outline-none focus:border-blue-500 shadow-inner"
+                value={justificationText}
+                onChange={(e) => setJustificationText(e.target.value)}
+              />
+              <div className="font-bold mb-1 text-gray-900">Select a standard justification for this field:</div>
+              <div className="border border-gray-400 h-[60px] p-1 bg-white overflow-y-auto shadow-inner">
+              </div>
             </div>
-          </div>
-          {/* Modal Footer */}
-          <div className="p-2 border-t border-gray-400 flex justify-center gap-2 bg-white">
-            <button onClick={handleSignificantModalYes} className="px-6 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100 focus:outline border-black outline-1 outline-dotted outline-offset-[-3px]">Yes</button>
-            <button onClick={handleSignificantModalNo} className="px-6 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100">No</button>
+            {/* Modal Footer */}
+            <div className="p-2 flex justify-center gap-2 bg-white">
+              <button className="px-4 py-0.5 border border-slate-200 rounded-sm text-gray-500 bg-white" disabled>Spell Check</button>
+              <button onClick={handleJustificationOk} className="px-6 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100 border-black outline-1 outline-dotted outline-offset-[-3px] bg-white">OK</button>
+              <button onClick={() => setShowJustificationModal(false)} className="px-4 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100 bg-white">Cancel</button>
+            </div>
           </div>
         </div>
-      </div>
-    )}
+      )}
 
-    {/* Justification Modal */}
-    {showJustificationModal && (
-      <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-[100]">
-        <div className="bg-white border border-slate-200 rounded-sm w-[500px] shadow-xl font-sans text-[11px]">
-          {/* Modal Header */}
-          <div className="bg-brand-primary text-white px-2 py-0.5 flex justify-between items-center cursor-default">
-            <div className="flex items-center gap-1">
-              <span className="text-amber-500 text-[10px] italic font-serif">e</span>
-              <span className="font-bold tracking-wide">Justification -- Webpage Dialog</span>
-            </div>
-            <button onClick={() => setShowJustificationModal(false)} className="bg-white text-black w-[14px] h-[14px] flex items-center justify-center border border-t-white border-l-white border-b-gray-800 border-r-gray-800 font-bold text-[9px] leading-none active:bg-slate-100">X</button>
-          </div>
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50/50 text-slate-800 px-2 py-1 border-b border-emerald-100 font-bold">
-            Follow-up Justification
-          </div>
-          {/* Modal Content */}
-          <div className="bg-white p-2 border-b border-gray-400">
-            <div className="font-bold mb-1 text-gray-900">Please enter a justification for performing this action:</div>
-            <textarea 
-              className="w-full h-[150px] border border-gray-400 p-1 mb-2 resize-none focus:outline-none focus:border-blue-500 shadow-inner"
-              value={justificationText}
-              onChange={(e) => setJustificationText(e.target.value)}
-            />
-            <div className="font-bold mb-1 text-gray-900">Select a standard justification for this field:</div>
-            <div className="border border-gray-400 h-[60px] p-1 bg-white overflow-y-auto shadow-inner">
-              <div className="cursor-default hover:bg-blue-600 hover:text-white px-1">Not specified</div>
-            </div>
-          </div>
-          {/* Modal Footer */}
-          <div className="p-2 flex justify-center gap-2 bg-white">
-            <button className="px-4 py-0.5 border border-slate-200 rounded-sm text-gray-500 bg-white" disabled>Spell Check</button>
-            <button onClick={handleJustificationOk} className="px-6 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100 border-black outline-1 outline-dotted outline-offset-[-3px] bg-white">OK</button>
-            <button onClick={() => setShowJustificationModal(false)} className="px-4 py-0.5 border border-slate-200 rounded-sm active:bg-slate-100 bg-white">Cancel</button>
-          </div>
-        </div>
-      </div>
-    )}
+      {/* ICD Browser Modal */}
+      <IcdBrowserModal
+        isOpen={showIcdBrowser}
+        onClose={() => setShowIcdBrowser(false)}
+        onSelect={handleIcdSelect}
+        initialSearchTerm={icdSearchTerm}
+      />
 
-    {/* ICD Browser Modal */}
-    <IcdBrowserModal 
-      isOpen={showIcdBrowser}
-      onClose={() => setShowIcdBrowser(false)}
-      onSelect={handleIcdSelect}
-      initialSearchTerm={icdSearchTerm}
-    />
+      <datalist id="all-countries-list">
+        {COUNTRIES.map(c => (
+          <option key={c.code} value={c.name} />
+        ))}
+      </datalist>
 
     </>
   );

@@ -50,8 +50,16 @@ async function upsert(req, res, next) {
     const reporterData = {
       first_name: first_name || null,
       last_name: last_name || null,
+      salutation: salutation || null,
+      suffix: suffix || null,
       country: country || null,
       reporter_type: reporter_type || null,
+      phone: phone || null,
+      city: city || null,
+      state: state || null,
+      postal_code: postal_code || null,
+      institution: institution || null,
+      email: email || null,
     };
 
     // First check if a reporter exists

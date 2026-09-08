@@ -31,6 +31,8 @@ async function upsert(req, res, next) {
 
     const {
       patient_code,
+      first_name,
+      last_name,
       dob,
       age_value,
       age_unit,
@@ -40,10 +42,21 @@ async function upsert(req, res, next) {
       ethnicity,
       medical_history,
       concomitant_meds,
+      patient_history_data,
+      lab_data,
     } = req.body;
 
+    const serializeField = (val) => {
+      if (val === undefined) return undefined;
+      if (val === null) return null;
+      if (typeof val === 'object') return JSON.stringify(val);
+      return String(val);
+    };
+
     const patientData = {
-      patient_code: patient_code || null,
+      patient_code: patient_code || [first_name, last_name].filter(Boolean).join(' ') || null,
+      first_name: first_name || null,
+      last_name: last_name || null,
       dob: dob ? new Date(dob) : null,
       age_value: (age_value !== null && age_value !== '') ? parseInt(age_value, 10) : null,
       age_unit: age_unit || null,
@@ -53,6 +66,8 @@ async function upsert(req, res, next) {
       ethnicity: ethnicity || null,
       medical_history: medical_history || null,
       concomitant_meds: concomitant_meds || null,
+      patient_history_data: serializeField(patient_history_data),
+      lab_data: serializeField(lab_data),
     };
 
     const patient = await prisma.sptOrgCad.upsert({
