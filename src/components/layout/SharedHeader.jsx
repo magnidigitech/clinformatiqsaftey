@@ -148,7 +148,7 @@ export default function SharedHeader() {
       <div className="flex items-center justify-between px-4 py-2 bg-transparent">
         <div className="flex items-center gap-1">
           {navTabs.map((tab, i) => {
-            const hasDropdown = tab.name === 'Case Actions' || tab.name === 'Utilities' || tab.name === 'Active Cases' || tab.name === 'Worklist' || tab.name === 'Dashboards' || tab.name === 'Reports';
+            const hasDropdown = tab.name === 'Case Actions' || tab.name === 'Utilities' || tab.name === 'Active Cases' || tab.name === 'Dashboards' || tab.name === 'Reports';
             const isActive = tab.name === activeTabName;
             const cls = cn(
               "block px-4 py-2 text-xs font-bold rounded-sm transition-all duration-200 cursor-pointer select-none",
@@ -193,12 +193,6 @@ export default function SharedHeader() {
                         <div className="px-4 py-2 text-xs text-slate-400 italic">No recent cases</div>
                       </div>
                     </div>
-                  </div>
-                )}
-                
-                {tab.name === 'Worklist' && (
-                  <div className={cn(dropdownContainerClass, "w-44")}>
-                    <Link to="/worklist" className={dropdownItemClass}><span>Action Items</span></Link>
                   </div>
                 )}
                 
