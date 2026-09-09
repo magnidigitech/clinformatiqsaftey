@@ -49,19 +49,34 @@ const authenticate = async (req, res, next) => {
     }
 
     // Check if session exists and is active
-    const session = await prisma.userSession.findUnique({
+    let session = await prisma.userSession.findUnique({
       where: { token },
     });
 
-    if (!session || !session.is_active) {
+    if (session && !session.is_active) {
       const error = new Error('Session has been revoked or expired. Please sign in again.');
       error.statusCode = 401;
       throw error;
     }
 
+    if (!session) {
+      // Auto-register session for valid JWT token to prevent false-positive logouts
+      const ip_address = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '127.0.0.1').split(',')[0].trim();
+      const user_agent = req.headers['user-agent'] || 'Unknown Device';
+      session = await prisma.userSession.create({
+        data: {
+          user_id: dbUser.user_id,
+          token,
+          ip_address,
+          user_agent,
+          is_active: true
+        }
+      }).catch(() => null);
+    }
+
     // Refresh last active timestamp asynchronously
     const now = new Date();
-    if (session.last_active && (now - new Date(session.last_active) > 30000)) {
+    if (session?.last_active && (now - new Date(session.last_active) > 30000)) {
       prisma.userSession.update({
         where: { session_id: session.session_id },
         data: { last_active: now }

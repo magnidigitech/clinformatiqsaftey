@@ -25,7 +25,10 @@ import UsersPage from './pages/UsersPage';
 function ProtectedRoute({ children, allowedRoles }) {
   const { isAuthenticated, user } = useAuth();
   
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) {
+    const redirectTarget = user?.role === 'ADMIN' ? '/admin-login' : '/login';
+    return <Navigate to={redirectTarget} replace />;
+  }
   if (allowedRoles && !allowedRoles.includes(user?.role)) return <Navigate to="/" replace />;
   
   return children;
@@ -35,7 +38,7 @@ function ProtectedRoute({ children, allowedRoles }) {
 export default function App() {
   const { isAuthenticated } = useAuth();
 
-  // Heartbeat to immediately detect revoked session or single-device login termination
+  // Periodic heartbeat to detect revoked session or single-device login termination
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -47,21 +50,10 @@ export default function App() {
       }
     };
 
-    // Initial check on mount / tab focus
-    const handleFocus = () => {
-      if (document.visibilityState === 'visible') {
-        checkSessionStatus();
-      }
-    };
-
-    const intervalId = setInterval(checkSessionStatus, 10000); // Check every 10 seconds
-    document.addEventListener('visibilitychange', handleFocus);
-    window.addEventListener('focus', handleFocus);
+    const intervalId = setInterval(checkSessionStatus, 15000); // Check every 15 seconds
 
     return () => {
       clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', handleFocus);
-      window.removeEventListener('focus', handleFocus);
     };
   }, [isAuthenticated]);
 

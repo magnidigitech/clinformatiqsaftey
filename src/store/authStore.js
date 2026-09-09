@@ -3,17 +3,37 @@ import { create } from 'zustand';
 const TOKEN_KEY = 'Clinformatiq_token';
 const USER_KEY = 'Clinformatiq_user';
 
+const getInitialAuthState = () => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem('token') || localStorage.getItem('clinformatiq_token');
+      const userStr = localStorage.getItem(USER_KEY) || localStorage.getItem('user') || localStorage.getItem('clinformatiq_user');
+      if (token && userStr) {
+        const user = JSON.parse(userStr);
+        return { user, token, isAuthenticated: true };
+      }
+    }
+  } catch (e) {
+    console.error('Failed to parse auth from localStorage:', e);
+  }
+  return { user: null, token: null, isAuthenticated: false };
+};
+
+const initialAuth = getInitialAuthState();
+
 const useAuthStore = create((set) => ({
-  user: null,
-  token: null,
-  isAuthenticated: false,
+  user: initialAuth.user,
+  token: initialAuth.token,
+  isAuthenticated: initialAuth.isAuthenticated,
 
   /**
    * Set authenticated user and token. Persists to localStorage.
    */
   setAuth: (user, token) => {
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+    } catch (_) {}
     set({ user, token, isAuthenticated: true });
   },
 
@@ -21,8 +41,14 @@ const useAuthStore = create((set) => ({
    * Clear auth state and remove persisted data.
    */
   logout: () => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('clinformatiq_token');
+      localStorage.removeItem('clinformatiq_user');
+    } catch (_) {}
     set({ user: null, token: null, isAuthenticated: false });
   },
 
@@ -30,18 +56,8 @@ const useAuthStore = create((set) => ({
    * Initialize auth state from localStorage on app startup.
    */
   initialize: () => {
-    try {
-      const token = localStorage.getItem(TOKEN_KEY);
-      const userStr = localStorage.getItem(USER_KEY);
-      if (token && userStr) {
-        const user = JSON.parse(userStr);
-        set({ user, token, isAuthenticated: true });
-      }
-    } catch {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
-      set({ user: null, token: null, isAuthenticated: false });
-    }
+    const auth = getInitialAuthState();
+    set(auth);
   },
 
   /**
@@ -50,12 +66,12 @@ const useAuthStore = create((set) => ({
   updateUser: (userData) => {
     set((state) => {
       const updatedUser = { ...state.user, ...userData };
-      localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+      try {
+        localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+      } catch (_) {}
       return { user: updatedUser };
     });
   },
 }));
-
-useAuthStore.getState().initialize();
 
 export default useAuthStore;

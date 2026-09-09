@@ -325,6 +325,7 @@ export default function CaseDetailPage() {
   };
 
   const fileInputRef = useRef(null);
+  const autoLockedRef = useRef(false);
   const [attachments, setAttachments] = useState([]);
   const [selectedAttachmentId, setSelectedAttachmentId] = useState(null);
   const [targetRowForUpload, setTargetRowForUpload] = useState(null);
@@ -1726,12 +1727,15 @@ export default function CaseDetailPage() {
       }
     };
 
-    if (!isReadOnly && caseData && !caseData.locked_by && id) {
+    if (!isReadOnly && caseData && !caseData.locked_by && id && !autoLockedRef.current) {
+      autoLockedRef.current = true;
       api.post(`/cases/${id}/lock`).then(() => {
         setCaseData(p => ({ ...p, locked_by: user?.username }));
-      }).catch(err => console.error("Auto-lock failed", err));
+      }).catch(err => {
+        console.error("Auto-lock failed", err);
+        autoLockedRef.current = false;
+      });
     }
-
 
     window.addEventListener('save_case', handleSave);
     window.addEventListener('print_case', handlePrint);
@@ -1742,10 +1746,6 @@ export default function CaseDetailPage() {
     window.addEventListener('route_case', handleRouteCase);
     window.addEventListener('lock_case', handleLockCase);
     return () => {
-      // Auto-unlock when leaving if we locked it
-      if (!isReadOnly && caseData && !caseData.locked_by && id) {
-        api.post(`/cases/${id}/unlock`).catch(err => console.error("Auto-unlock failed", err));
-      }
       window.removeEventListener('save_case', handleSave);
       window.removeEventListener('print_case', handlePrint);
       window.removeEventListener('print_medical_summary', handlePrintMedicalSummary);
@@ -1756,6 +1756,16 @@ export default function CaseDetailPage() {
       window.removeEventListener('lock_case', handleLockCase);
     };
   }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, routingComments, patientHistories, labTests, labDates, labResults, isReadOnly, caseData, user]);
+
+  useEffect(() => {
+    return () => {
+      // Auto-unlock ONLY on unmount or case navigation if we were the one that auto-locked it
+      if (autoLockedRef.current && id) {
+        api.post(`/cases/${id}/unlock`).catch(err => console.error("Auto-unlock failed", err));
+        autoLockedRef.current = false;
+      }
+    };
+  }, [id]);
 
   useEffect(() => {
     if (printLayout) {
