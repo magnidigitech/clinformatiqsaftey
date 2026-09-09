@@ -37,17 +37,20 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-if (process.env.NODE_ENV === 'production') {
-  const path = require('path');
+const path = require('path');
+const fs = require('fs');
+const distPath = path.join(__dirname, '../dist');
+
+if (process.env.NODE_ENV === 'production' || fs.existsSync(distPath)) {
   // Serve static assets from the Vite build directory
-  app.use(express.static(path.join(__dirname, '../dist')));
+  app.use(express.static(distPath));
 
   // Fallback to index.html for React Router SPA navigation
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) {
       return next();
     }
-    res.sendFile(path.join(__dirname, '../dist/index.html'));
+    res.sendFile(path.join(distPath, 'index.html'));
   });
 }
 

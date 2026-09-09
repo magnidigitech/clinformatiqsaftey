@@ -1873,6 +1873,46 @@ export default function CaseDetailPage() {
   const lbl = "text-[11px] font-semibold text-slate-600 leading-tight mb-0.5";
   const secHeader = "bg-gradient-to-r from-slate-50 to-slate-100/80 text-slate-700 px-3 py-1.5 text-xs font-bold border-b border-slate-200 flex justify-between items-center";
 
+  if (loading && !caseData) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-3 bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+          <div className="text-xs font-semibold text-slate-700">Loading Case Details...</div>
+          <div className="text-[11px] text-slate-400">Please wait while the case data is being loaded.</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!loading && !caseData) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans p-4">
+        <div className="flex flex-col items-center text-center gap-3 bg-white p-8 rounded-lg border border-slate-200 shadow-sm max-w-md">
+          <div className="text-4xl">⚠️</div>
+          <div className="text-sm font-bold text-slate-800">Case Not Found</div>
+          <div className="text-xs text-slate-500">
+            Case #{id} could not be loaded or you do not have permission to view it.
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded border border-slate-300 transition-colors cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => navigate('/worklist')}
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded transition-colors cursor-pointer"
+            >
+              Back to Worklist
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="min-h-full bg-slate-50/50 flex flex-col font-sans text-[12px] print:hidden">
