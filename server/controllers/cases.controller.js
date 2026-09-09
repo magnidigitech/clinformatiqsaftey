@@ -36,7 +36,8 @@ async function list(req, res, next) {
         {
           OR: [
             { locked_by: null },
-            { locked_by: user.username }
+            { locked_by: user.username },
+            { assigned_to: user.user_id }
           ]
         }
       ];
@@ -353,13 +354,16 @@ async function update(req, res, next) {
     }
 
     let updatedStudentId = undefined;
-    if (assigned_to) {
-      // Find the user by username to assign to
-      const targetUser = await prisma.user.findUnique({
-        where: { username: assigned_to }
-      });
-      if (targetUser) {
-        updatedStudentId = targetUser.user_id;
+    if (assigned_to !== undefined && assigned_to !== null && assigned_to !== '') {
+      if (/^\d+$/.test(String(assigned_to))) {
+        updatedStudentId = parseInt(assigned_to, 10);
+      } else {
+        const targetUser = await prisma.user.findUnique({
+          where: { username: assigned_to }
+        });
+        if (targetUser) {
+          updatedStudentId = targetUser.user_id;
+        }
       }
     }
 
@@ -695,6 +699,26 @@ async function routeCase(req, res, next) {
     }
 
     const defaultComments = isReturn ? 'Case returned with QC Completed' : 'Case routed for QC';
+    const commentText = comments || defaultComments;
+
+    const newRoutingComment = {
+      id: Date.now(),
+      date: new Date().toISOString().split('T')[0],
+      user: req.user.full_name || req.user.username,
+      comment: commentText
+    };
+
+    if (Array.isArray(req.body.routingComments)) {
+      parsedAnalysis.routingComments = req.body.routingComments;
+    } else if (!Array.isArray(parsedAnalysis.routingComments)) {
+      parsedAnalysis.routingComments = [];
+    }
+
+    // Prepend the new routing comment and avoid duplicate of identical text by same user
+    parsedAnalysis.routingComments = [
+      newRoutingComment,
+      ...parsedAnalysis.routingComments.filter(rc => !(rc.comment === commentText && (rc.user === (req.user.full_name || req.user.username))))
+    ];
 
     const [updatedCase] = await prisma.$transaction([
       prisma.sptOrgCase.update({
@@ -702,7 +726,9 @@ async function routeCase(req, res, next) {
         data: { 
           assigned_to: assigneeId,
           workflow_state: toState,
-          analysis_data: JSON.stringify(parsedAnalysis)
+          analysis_data: JSON.stringify(parsedAnalysis),
+          locked_by: null,
+          lock_time: null,
         },
       }),
       prisma.workflowLog.create({
@@ -711,7 +737,7 @@ async function routeCase(req, res, next) {
           from_state: fromState,
           to_state: toState,
           actioned_by: req.user.user_id,
-          comments: comments || defaultComments,
+          comments: commentText,
         },
       }),
     ]);

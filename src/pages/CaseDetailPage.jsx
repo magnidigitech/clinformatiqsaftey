@@ -2218,7 +2218,7 @@ export default function CaseDetailPage() {
 
   const getDisplayStatus = (state) => {
     if (!state || state === 'DRAFT') return 'Data Entry';
-    if (state === 'PENDING_QC') return 'QC';
+    if (state === 'PENDING_QC') return 'QC Pending';
     if (state === 'QC_COMPLETED') return 'QC Completed';
     if (state === 'CLOSED') return 'Closed';
     return state;
@@ -5573,9 +5573,11 @@ export default function CaseDetailPage() {
                     assigned_to: selectedAssignee,
                     comments: routeComments,
                     action: isQcState ? 'RETURN' : 'ROUTE',
-                    workflow_state: isQcState ? 'QC_COMPLETED' : 'PENDING_QC'
+                    workflow_state: isQcState ? 'QC_COMPLETED' : 'PENDING_QC',
+                    routingComments: routingComments
                   })
                     .then(() => {
+                      autoLockedRef.current = false;
                       setShowRoutePrompt(false);
                       navigate('/worklist');
                     })

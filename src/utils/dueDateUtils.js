@@ -34,7 +34,7 @@ export function getDueDate(caseData) {
       const routedAt = new Date(qcLog.action_time);
       const due = new Date(routedAt);
       due.setDate(due.getDate() + DUE_DAYS);
-      return { dueDate: due, phase: 'QC' };
+      return { dueDate: due, phase: 'QC Pending' };
     }
   }
 
