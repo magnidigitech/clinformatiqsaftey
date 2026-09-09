@@ -1383,7 +1383,9 @@ export default function CaseDetailPage() {
   }]);
   const [activeDosageTab, setActiveDosageTab] = useState(1);
 
-  const activeRegimen = dosageTabs.find(t => t.id === activeDosageTab) || dosageTabs[0];
+  const activeRegimen = (dosageTabs && dosageTabs.length > 0)
+    ? (dosageTabs.find(t => t.id === activeDosageTab) || dosageTabs[0])
+    : {};
 
   const updateDosageTab = (regId, field, value) => {
     setDosageTabs(p => {
@@ -1394,11 +1396,12 @@ export default function CaseDetailPage() {
   };
 
   useEffect(() => {
-    if (activeRegimen?.ongoing) {
+    if (!activeRegimen || !activeRegimen.id) return;
+    if (activeRegimen.ongoing) {
       if (activeRegimen.stopDate !== '') updateDosageTab(activeDosageTab, 'stopDate', '');
       if (activeRegimen.duration !== '') updateDosageTab(activeDosageTab, 'duration', '');
     } else {
-      if (activeRegimen?.startDate && activeRegimen?.stopDate) {
+      if (activeRegimen.startDate && activeRegimen.stopDate) {
         const start = new Date(activeRegimen.startDate);
         const stop = new Date(activeRegimen.stopDate);
         if (!isNaN(start) && !isNaN(stop)) {
@@ -3720,39 +3723,39 @@ export default function CaseDetailPage() {
                     {!isCollapsed('dosageRegimens') && (
                       <div className="p-2 bg-white space-y-2">
                         <div className="grid grid-cols-6 gap-2 items-start">
-                          <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen.startDate} onChange={(e) => updateDosageTab(activeDosageTab, 'startDate', e.target.value)} /></div>
-                          <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen.stopDate} onChange={(e) => updateDosageTab(activeDosageTab, 'stopDate', e.target.value)} /></div>
+                          <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen?.startDate || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'startDate', e.target.value)} /></div>
+                          <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} value={activeRegimen?.stopDate || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'stopDate', e.target.value)} /></div>
                           <div className="flex flex-col gap-1 mt-3">
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={activeRegimen.ongoing} onChange={(e) => updateDosageTab(activeDosageTab, 'ongoing', e.target.checked)} /> Ongoing</label>
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={activeRegimen.outsideRange} onChange={(e) => updateDosageTab(activeDosageTab, 'outsideRange', e.target.checked)} /> Outside Therapeutic Range</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeRegimen?.ongoing} onChange={(e) => updateDosageTab(activeDosageTab, 'ongoing', e.target.checked)} /> Ongoing</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeRegimen?.outsideRange} onChange={(e) => updateDosageTab(activeDosageTab, 'outsideRange', e.target.checked)} /> Outside Therapeutic Range</label>
                           </div>
-                          <div><label className={lbl}>Duration of Regimen</label><input className={inp} value={activeRegimen.duration} onChange={(e) => updateDosageTab(activeDosageTab, 'duration', e.target.value)} /></div>
-                          <div><label className={lbl}>Dose Number</label><input className={inp} value={activeRegimen.doseNumber} onChange={(e) => updateDosageTab(activeDosageTab, 'doseNumber', e.target.value)} /></div>
+                          <div><label className={lbl}>Duration of Regimen</label><input className={inp} value={activeRegimen?.duration || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'duration', e.target.value)} /></div>
+                          <div><label className={lbl}>Dose Number</label><input className={inp} value={activeRegimen?.doseNumber || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'doseNumber', e.target.value)} /></div>
                           <div className="flex gap-1">
-                            <div className="flex-1"><label className={lbl}>Dose</label><input className={inp} value={activeRegimen.dose} onChange={(e) => updateDosageTab(activeDosageTab, 'dose', e.target.value)} /></div>
-                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.doseUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'doseUnits', e.target.value)} /></div>
-                            <div className="flex-1"><label className={lbl}>Frequency</label><input className={inp} value={activeRegimen.frequency} onChange={(e) => updateDosageTab(activeDosageTab, 'frequency', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Dose</label><input className={inp} value={activeRegimen?.dose || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'dose', e.target.value)} /></div>
+                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen?.doseUnits || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'doseUnits', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Frequency</label><input className={inp} value={activeRegimen?.frequency || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'frequency', e.target.value)} /></div>
                           </div>
                         </div>
                         <div className="grid grid-cols-6 gap-2">
-                          <div><label className={lbl}>Dose Description</label><input className={inp} value={activeRegimen.doseDescription} onChange={(e) => updateDosageTab(activeDosageTab, 'doseDescription', e.target.value)} /></div>
+                          <div><label className={lbl}>Dose Description</label><input className={inp} value={activeRegimen?.doseDescription || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'doseDescription', e.target.value)} /></div>
                           <div className="flex gap-1">
-                            <div className="flex-1"><label className={lbl}>Daily Dosage</label><input className={inp} value={activeRegimen.dailyDosage} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosage', e.target.value)} /></div>
-                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.dailyDosageUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosageUnits', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Daily Dosage</label><input className={inp} value={activeRegimen?.dailyDosage || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosage', e.target.value)} /></div>
+                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen?.dailyDosageUnits || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'dailyDosageUnits', e.target.value)} /></div>
                           </div>
                           <div className="flex gap-1">
-                            <div className="flex-1"><label className={lbl}>Regimen Dosage</label><input className={inp} value={activeRegimen.regimenDosage} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosage', e.target.value)} /></div>
-                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen.regimenDosageUnits} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosageUnits', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Regimen Dosage</label><input className={inp} value={activeRegimen?.regimenDosage || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosage', e.target.value)} /></div>
+                            <div className="w-10"><label className={lbl}>Units</label><input className={inp} value={activeRegimen?.regimenDosageUnits || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'regimenDosageUnits', e.target.value)} /></div>
                           </div>
-                          <div className="col-span-1"><label className={lbl}>Patient Route of Administration</label><input className={inp} value={activeRegimen.patientRoute} onChange={(e) => updateDosageTab(activeDosageTab, 'patientRoute', e.target.value)} /></div>
-                          <div className="col-span-2"><label className={lbl}>Parent Route of Administration</label><input className={inp} value={activeRegimen.parentRoute} onChange={(e) => updateDosageTab(activeDosageTab, 'parentRoute', e.target.value)} /></div>
+                          <div className="col-span-1"><label className={lbl}>Patient Route of Administration</label><input className={inp} value={activeRegimen?.patientRoute || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'patientRoute', e.target.value)} /></div>
+                          <div className="col-span-2"><label className={lbl}>Parent Route of Administration</label><input className={inp} value={activeRegimen?.parentRoute || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'parentRoute', e.target.value)} /></div>
                         </div>
                         <div className="grid grid-cols-4 gap-2">
-                          <div><label className={lbl}>Accidental Exposure</label><input className={inp} value={activeRegimen.accidentalExposure} onChange={(e) => updateDosageTab(activeDosageTab, 'accidentalExposure', e.target.value)} /></div>
-                          <div><label className={lbl}>Package ID</label><input className={inp} value={activeRegimen.packageId} onChange={(e) => updateDosageTab(activeDosageTab, 'packageId', e.target.value)} /></div>
+                          <div><label className={lbl}>Accidental Exposure</label><input className={inp} value={activeRegimen?.accidentalExposure || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'accidentalExposure', e.target.value)} /></div>
+                          <div><label className={lbl}>Package ID</label><input className={inp} value={activeRegimen?.packageId || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'packageId', e.target.value)} /></div>
                           <div className="flex gap-2 col-span-2">
-                            <div className="flex-1"><label className={lbl}>Batch / Lot #</label><input className={inp} value={activeRegimen.batchLot} onChange={(e) => updateDosageTab(activeDosageTab, 'batchLot', e.target.value)} /></div>
-                            <div className="flex-1"><label className={lbl}>Expiration Date</label><input type="date" className={inp} value={activeRegimen.expirationDate} onChange={(e) => updateDosageTab(activeDosageTab, 'expirationDate', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Batch / Lot #</label><input className={inp} value={activeRegimen?.batchLot || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'batchLot', e.target.value)} /></div>
+                            <div className="flex-1"><label className={lbl}>Expiration Date</label><input type="date" className={inp} value={activeRegimen?.expirationDate || ''} onChange={(e) => updateDosageTab(activeDosageTab, 'expirationDate', e.target.value)} /></div>
                           </div>
                         </div>
 
