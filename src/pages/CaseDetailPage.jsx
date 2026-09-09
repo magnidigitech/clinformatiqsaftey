@@ -255,7 +255,28 @@ export default function CaseDetailPage() {
       category: '',
       entity: '',
       entityCode: '',
-      seriousnessCriteria: []
+      seriousnessCriteria: [],
+      otherSeriousnessText: '',
+      isDiagnosis: false,
+      isSymptoms: false,
+      onsetDate: '',
+      onsetFromLastDose: '',
+      highlightedByReporter: '',
+      stopDate: '',
+      duration: '',
+      onsetLatency: '',
+      receiptDate: '',
+      priorHistory: '',
+      treatmentReceived: '',
+      intensity: '',
+      frequency: '',
+      outcome: '',
+      lackOfEfficacy: false,
+      withdrawalReaction: false,
+      progressionOfDisease: false,
+      relatedStudyReported: '',
+      relatedStudyConduct: '',
+      droppedFromStudy: false
     }
   ]);
 
@@ -986,8 +1007,17 @@ export default function CaseDetailPage() {
       }
 
       // Hydrate Events
-      if (data.events && data.events.length > 0) {
-        setEventTabs(data.events.map(evt => {
+      let loadedEventTabs = [];
+      if (parsedAnalysis.eventsData && Array.isArray(parsedAnalysis.eventsData) && parsedAnalysis.eventsData.length > 0) {
+        loadedEventTabs = parsedAnalysis.eventsData.map((evt, idx) => {
+          const matchingBackend = data.events?.find(e => e.event_id === evt.backendId) || data.events?.[idx];
+          return {
+            ...evt,
+            backendId: matchingBackend ? matchingBackend.event_id : (evt.backendId || null)
+          };
+        });
+      } else if (data.events && data.events.length > 0) {
+        loadedEventTabs = data.events.map(evt => {
           let criteria = [];
           if (evt.serious_criteria) {
             try { criteria = JSON.parse(evt.serious_criteria); } catch (e) { criteria = []; }
@@ -1000,13 +1030,47 @@ export default function CaseDetailPage() {
             category: evt.category || '',
             entity: evt.entity_title || evt.entity_code || '',
             entityCode: evt.entity_code || '',
+            descriptionReported: evt.narrative || '',
             descriptionCoded: evt.narrative || '',
             name: evt.entity_title || evt.entity_code || evt.narrative || 'Event',
-            seriousnessCriteria: criteria
+            seriousnessCriteria: criteria,
+            otherSeriousnessText: '',
+            isDiagnosis: false,
+            isSymptoms: false,
+            onsetDate: evt.onset_date ? new Date(evt.onset_date).toISOString().slice(0, 16) : '',
+            onsetFromLastDose: '',
+            highlightedByReporter: '',
+            stopDate: evt.end_date ? new Date(evt.end_date).toISOString().slice(0, 16) : '',
+            duration: '',
+            onsetLatency: '',
+            receiptDate: '',
+            priorHistory: '',
+            treatmentReceived: '',
+            intensity: evt.severity || '',
+            frequency: '',
+            outcome: evt.outcome || '',
+            lackOfEfficacy: false,
+            withdrawalReaction: false,
+            progressionOfDisease: false,
+            relatedStudyReported: '',
+            relatedStudyConduct: '',
+            droppedFromStudy: false
           };
-        }));
-        setActiveEventTab(data.events[0].event_id);
+        });
+      }
 
+      if (loadedEventTabs.length > 0) {
+        setEventTabs(loadedEventTabs);
+        const activeEvtId = (parsedAnalysis.activeEventTabId && loadedEventTabs.some(e => e.id === parsedAnalysis.activeEventTabId))
+          ? parsedAnalysis.activeEventTabId
+          : loadedEventTabs[0].id;
+        setActiveEventTab(activeEvtId);
+      }
+
+      // Hydrate Event Assessments
+      if (parsedAnalysis.eventAssessments && Array.isArray(parsedAnalysis.eventAssessments) && parsedAnalysis.eventAssessments.length > 0) {
+        setEventAssessments(parsedAnalysis.eventAssessments);
+      } else if (data.events && data.events.length > 0) {
         const loadedAssessments = [];
         data.events.forEach(evt => {
           if (evt.causalities && evt.causalities.length > 0) {
@@ -1767,6 +1831,10 @@ export default function CaseDetailPage() {
           // Complete Products Data
           productsData: syncedProductTabs,
           activeProductTabId: activeProductTab,
+          // Complete Events Data
+          eventsData: eventTabs,
+          activeEventTabId: activeEventTab,
+          eventAssessments: eventAssessments || [],
         };
 
         // Save General Case Info & Analysis
@@ -1917,35 +1985,33 @@ export default function CaseDetailPage() {
             })
             .filter(Boolean);
 
+          const evtPayload = {
+            chapter: evt.chapter || null,
+            block: evt.block || null,
+            category: evt.category || null,
+            entity_title: evt.entity || evt.descriptionReported || evt.name || 'Unknown Entity',
+            entity_code: evt.entityCode || null,
+            narrative: evt.descriptionCoded || evt.descriptionReported || null,
+            onset_date: evt.onsetDate ? new Date(evt.onsetDate) : null,
+            end_date: evt.stopDate ? new Date(evt.stopDate) : null,
+            severity: evt.intensity || null,
+            outcome: evt.outcome || null,
+            serious_criteria: evt.seriousnessCriteria && evt.seriousnessCriteria.length > 0 ? JSON.stringify(evt.seriousnessCriteria) : null,
+            causalities
+          };
+
           if (evt.backendId) {
-            await api.put(`/cases/${id}/events/${evt.backendId}`, {
-              chapter: evt.chapter || null,
-              block: evt.block || null,
-              category: evt.category || null,
-              entity_title: evt.entity || null,
-              entity_code: evt.entityCode || null,
-              narrative: evt.descriptionCoded,
-              serious_criteria: evt.seriousnessCriteria && evt.seriousnessCriteria.length > 0 ? JSON.stringify(evt.seriousnessCriteria) : null,
-              causalities
-            });
+            await api.put(`/cases/${id}/events/${evt.backendId}`, evtPayload);
           } else {
             try {
-              const res = await api.post(`/cases/${id}/events`, {
-                chapter: evt.chapter || null,
-                block: evt.block || null,
-                category: evt.category || null,
-                entity_title: evt.entity || 'Unknown Entity',
-                entity_code: evt.entityCode || null,
-                narrative: evt.descriptionCoded,
-                serious_criteria: evt.seriousnessCriteria && evt.seriousnessCriteria.length > 0 ? JSON.stringify(evt.seriousnessCriteria) : null,
-                causalities
-              });
+              const res = await api.post(`/cases/${id}/events`, evtPayload);
               evt.backendId = res.data.data.event_id;
             } catch (e) {
               console.warn("Event save failed", e);
             }
           }
         }
+        setEventTabs([...eventTabs]);
 
         // Upsert Action Items
         for (const item of actionItems) {
@@ -3906,7 +3972,29 @@ export default function CaseDetailPage() {
                           block: '',
                           category: '',
                           entity: '',
-                          entityCode: ''
+                          entityCode: '',
+                          seriousnessCriteria: [],
+                          otherSeriousnessText: '',
+                          isDiagnosis: false,
+                          isSymptoms: false,
+                          onsetDate: '',
+                          onsetFromLastDose: '',
+                          highlightedByReporter: '',
+                          stopDate: '',
+                          duration: '',
+                          onsetLatency: '',
+                          receiptDate: '',
+                          priorHistory: '',
+                          treatmentReceived: '',
+                          intensity: '',
+                          frequency: '',
+                          outcome: '',
+                          lackOfEfficacy: false,
+                          withdrawalReaction: false,
+                          progressionOfDisease: false,
+                          relatedStudyReported: '',
+                          relatedStudyConduct: '',
+                          droppedFromStudy: false
                         }]);
                         setActiveEventTab(newId);
                       }}
@@ -4047,7 +4135,7 @@ export default function CaseDetailPage() {
                                   {item.label}
                                 </label>
                               ))}
-                              <input className={cn(inp, "col-span-1 mt-1")} />
+                              <input className={cn(inp, "col-span-1 mt-1")} value={activeEvent?.otherSeriousnessText || ''} onChange={(e) => updateActiveEvent('otherSeriousnessText', e.target.value)} placeholder="Specify other..." />
                             </div>
                           </div>
                         </div>
@@ -4057,41 +4145,41 @@ export default function CaseDetailPage() {
                           <div className="grid grid-cols-[80px_1fr] gap-2 items-center">
                             <label className={lbl}>Diagnosis</label>
                             <div className="flex gap-4">
-                              <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" /> Diagnosis</label>
-                              <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" /> Symptoms</label>
+                              <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeEvent?.isDiagnosis} onChange={(e) => updateActiveEvent('isDiagnosis', e.target.checked)} /> Diagnosis</label>
+                              <label className="flex items-center gap-1 text-[10px] font-semibold text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeEvent?.isSymptoms} onChange={(e) => updateActiveEvent('isSymptoms', e.target.checked)} /> Symptoms</label>
                             </div>
                           </div>
                           <div className="grid grid-cols-3 gap-2">
-                            <div><label className={lbl}>Onset Date/Time</label><input type="datetime-local" className={inp} defaultValue="" /></div>
-                            <div><label className={lbl}>Onset From Last Dose</label><input className={inp} defaultValue="" /></div>
-                            <div><label className={lbl}>Term Highlighted by Reporter</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
+                            <div><label className={lbl}>Onset Date/Time</label><input type="datetime-local" className={inp} value={activeEvent?.onsetDate || ''} onChange={(e) => updateActiveEvent('onsetDate', e.target.value)} /></div>
+                            <div><label className={lbl}>Onset From Last Dose</label><input className={inp} value={activeEvent?.onsetFromLastDose || ''} onChange={(e) => updateActiveEvent('onsetFromLastDose', e.target.value)} /></div>
+                            <div><label className={lbl}>Term Highlighted by Reporter</label><select className={sel} value={activeEvent?.highlightedByReporter || ''} onChange={(e) => updateActiveEvent('highlightedByReporter', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="UNK">UNK</option></select></div>
                           </div>
                           <div className="grid grid-cols-3 gap-2 mt-4">
-                            <div className="col-span-2"><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={cn(inp, "bg-slate-50")} defaultValue="" /></div>
-                            <div><label className={lbl}>Duration</label><input className={inp} /></div>
+                            <div className="col-span-2"><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={cn(inp, "bg-slate-50")} value={activeEvent?.stopDate || ''} onChange={(e) => updateActiveEvent('stopDate', e.target.value)} /></div>
+                            <div><label className={lbl}>Duration</label><input className={inp} value={activeEvent?.duration || ''} onChange={(e) => updateActiveEvent('duration', e.target.value)} /></div>
                           </div>
                           <div className="grid grid-cols-3 gap-2">
-                            <div><label className={lbl}>Onset Latency</label><input className={inp} defaultValue="" /></div>
-                            <div><label className={lbl}>Receipt Date</label><input type="date" className={inp} defaultValue="" /></div>
-                            <div><label className={lbl}>Patient Has Prior History?</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
-                            <div className="col-start-3"><label className={lbl}>Treatment Received?</label><select className={sel}><option></option><option>Yes</option><option>No</option><option>UNK</option></select></div>
+                            <div><label className={lbl}>Onset Latency</label><input className={inp} value={activeEvent?.onsetLatency || ''} onChange={(e) => updateActiveEvent('onsetLatency', e.target.value)} /></div>
+                            <div><label className={lbl}>Receipt Date</label><input type="date" className={inp} value={activeEvent?.receiptDate || ''} onChange={(e) => updateActiveEvent('receiptDate', e.target.value)} /></div>
+                            <div><label className={lbl}>Patient Has Prior History?</label><select className={sel} value={activeEvent?.priorHistory || ''} onChange={(e) => updateActiveEvent('priorHistory', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="UNK">UNK</option></select></div>
+                            <div className="col-start-3"><label className={lbl}>Treatment Received?</label><select className={sel} value={activeEvent?.treatmentReceived || ''} onChange={(e) => updateActiveEvent('treatmentReceived', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="UNK">UNK</option></select></div>
                           </div>
                           <div className="grid grid-cols-3 gap-2">
-                            <div><label className={lbl}>Intensity</label><input className={inp} /></div>
-                            <div><label className={lbl}>Frequency</label><input className={inp} /></div>
-                            <div><label className={lbl}>Outcome of Event</label><input className={inp} defaultValue="" /></div>
+                            <div><label className={lbl}>Intensity</label><input className={inp} value={activeEvent?.intensity || ''} onChange={(e) => updateActiveEvent('intensity', e.target.value)} /></div>
+                            <div><label className={lbl}>Frequency</label><input className={inp} value={activeEvent?.frequency || ''} onChange={(e) => updateActiveEvent('frequency', e.target.value)} /></div>
+                            <div><label className={lbl}>Outcome of Event</label><input className={inp} value={activeEvent?.outcome || ''} onChange={(e) => updateActiveEvent('outcome', e.target.value)} /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4 mt-2">
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Lack of Efficacy</label>
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Adverse Drug Withdrawal Reaction</label>
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Progression of Disease</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeEvent?.lackOfEfficacy} onChange={(e) => updateActiveEvent('lackOfEfficacy', e.target.checked)} /> Lack of Efficacy</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeEvent?.withdrawalReaction} onChange={(e) => updateActiveEvent('withdrawalReaction', e.target.checked)} /> Adverse Drug Withdrawal Reaction</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeEvent?.progressionOfDisease} onChange={(e) => updateActiveEvent('progressionOfDisease', e.target.checked)} /> Progression of Disease</label>
                           </div>
                           <div className="grid grid-cols-2 gap-2 mt-2">
-                            <div><label className={lbl}>Related to Study Conduct?<br />(As Reported)</label><select className={sel}><option></option></select></div>
-                            <div><label className={lbl}>Related to Study Conduct?</label><select className={sel}><option></option></select></div>
+                            <div><label className={lbl}>Related to Study Conduct?<br />(As Reported)</label><select className={sel} value={activeEvent?.relatedStudyReported || ''} onChange={(e) => updateActiveEvent('relatedStudyReported', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="UNK">UNK</option></select></div>
+                            <div><label className={lbl}>Related to Study Conduct?</label><select className={sel} value={activeEvent?.relatedStudyConduct || ''} onChange={(e) => updateActiveEvent('relatedStudyConduct', e.target.value)}><option value=""></option><option value="Yes">Yes</option><option value="No">No</option><option value="UNK">UNK</option></select></div>
                           </div>
                           <div className="mt-1">
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Dropped From Study Due to Event</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeEvent?.droppedFromStudy} onChange={(e) => updateActiveEvent('droppedFromStudy', e.target.checked)} /> Dropped From Study Due to Event</label>
                           </div>
 
                           <div className="border border-gray-300 mt-4 h-32 flex flex-col bg-white">
