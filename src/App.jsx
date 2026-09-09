@@ -126,6 +126,7 @@ export default function App() {
         <Route path="/cases/:id" element={<CaseDetailPage />} />
         <Route path="/meddra" element={<MedDRAPage />} />
         <Route path="/workflow" element={<WorkflowPage />} />
+        <Route path="/worklist" element={<WorkflowPage />} />
         <Route path="/instructor" element={<ProtectedRoute allowedRoles={['INSTRUCTOR', 'ADMIN']}><InstructorPage /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute allowedRoles={['ADMIN']}><AdminPage /></ProtectedRoute>} />
         <Route path="/settings" element={<SettingsPage />} />

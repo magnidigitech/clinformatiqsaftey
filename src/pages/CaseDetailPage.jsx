@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import api from '../services/api';
@@ -571,6 +571,34 @@ export default function CaseDetailPage() {
   const [orgUsers, setOrgUsers] = useState([]);
   const [selectedAssignee, setSelectedAssignee] = useState('');
   const [routeComments, setRouteComments] = useState('');
+
+  const isQcState = caseData?.workflow_state === 'PENDING_QC';
+
+  const returnUser = useMemo(() => {
+    if (caseData?.qc_requested_by) {
+      return caseData.qc_requested_by;
+    }
+    if (caseData?.workflow_logs && caseData.workflow_logs.length > 0) {
+      const lastQcLog = [...caseData.workflow_logs].reverse().find(l => l.to_state === 'PENDING_QC');
+      if (lastQcLog?.user) return lastQcLog.user;
+    }
+    return caseData?.student || null;
+  }, [caseData]);
+
+  useEffect(() => {
+    if (showRoutePrompt) {
+      if (isQcState && returnUser) {
+        setSelectedAssignee(String(returnUser.user_id || returnUser.id));
+        setRouteComments('');
+      } else if (!isQcState) {
+        setSelectedAssignee('');
+        setRouteComments('');
+        api.get('/users/org').then(res => {
+          setOrgUsers(res.data.data);
+        }).catch(err => console.error("Failed to fetch org users:", err));
+      }
+    }
+  }, [showRoutePrompt, isQcState, returnUser]);
 
   // Save modal state
   const [isSaving, setIsSaving] = useState(false);
@@ -1652,7 +1680,7 @@ export default function CaseDetailPage() {
         });
         return;
       }
-      if (caseData.workflow_state !== 'QC_COMPLETED' && caseData.assigned_to !== user?.user_id) {
+      if (caseData.workflow_state !== 'QC_COMPLETED' && caseData.workflow_state !== 'PENDING_QC' && caseData.assigned_to !== user?.user_id) {
         setNoticeDialog({
           title: "Argus Safety Web -- Webpage Dialog",
           message: "You cannot close this case. It must be routed for QC.",
@@ -5013,28 +5041,44 @@ export default function CaseDetailPage() {
           </div>
         )}
 
-        {/* Route Prompt Modal */}
+        {/* Route / Return Prompt Modal */}
         {showRoutePrompt && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
-            <div className="bg-white w-[400px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden">
-              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center">
-                <span className="text-white font-bold text-[11px] tracking-wide">Route Case</span>
-                <button onClick={() => setShowRoutePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold">✕</button>
+            <div className="bg-white w-[420px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center select-none">
+                <span className="text-white font-bold text-[11px] tracking-wide">
+                  {isQcState ? "Return Case" : "Route Case"}
+                </span>
+                <button onClick={() => setShowRoutePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold cursor-pointer">✕</button>
               </div>
               <div className="bg-white border-b border-gray-400 p-6 flex flex-col gap-4">
                 <div className="flex items-center gap-4">
                   <div className="text-[32px] text-blue-600 leading-none pb-2">?</div>
-                  <div className="text-[12px] text-black">Select User to Route for QC:</div>
+                  <div className="text-[12px] text-black font-semibold">
+                    {isQcState ? "Select User to Return:" : "Select User to Route for QC:"}
+                  </div>
                 </div>
                 <select className={sel} value={selectedAssignee} onChange={(e) => setSelectedAssignee(e.target.value)}>
-                  <option value="">-- Select User --</option>
-                  {orgUsers.map(u => (
-                    <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
-                  ))}
+                  {isQcState ? (
+                    returnUser ? (
+                      <option value={returnUser.user_id || returnUser.id}>
+                        {returnUser.full_name || returnUser.username} {returnUser.role ? `(${returnUser.role})` : ''}
+                      </option>
+                    ) : (
+                      <option value="">-- No Requester Found --</option>
+                    )
+                  ) : (
+                    <>
+                      <option value="">-- Select User --</option>
+                      {orgUsers.map(u => (
+                        <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
+                      ))}
+                    </>
+                  )}
                 </select>
                 <textarea
-                  className="w-full h-16 border border-slate-300 rounded p-1 text-[11px]"
-                  placeholder="Routing comments..."
+                  className="w-full h-16 border border-slate-300 rounded p-1 text-[11px] font-sans"
+                  placeholder={isQcState ? "Return comments..." : "Routing comments..."}
                   value={routeComments}
                   onChange={(e) => setRouteComments(e.target.value)}
                 />
@@ -5044,26 +5088,33 @@ export default function CaseDetailPage() {
                   if (!selectedAssignee) {
                     setNoticeDialog({
                       title: "Argus Safety Web -- Webpage Dialog",
-                      message: "Please select a user to route to.",
+                      message: isQcState ? "Please select a user to return to." : "Please select a user to route to.",
                       icon: "warning"
                     });
                     return;
                   }
-                  api.post(`/cases/${id}/route`, { assigned_to: selectedAssignee, comments: routeComments })
+                  api.post(`/cases/${id}/route`, {
+                    assigned_to: selectedAssignee,
+                    comments: routeComments,
+                    action: isQcState ? 'RETURN' : 'ROUTE',
+                    workflow_state: isQcState ? 'QC_COMPLETED' : 'PENDING_QC'
+                  })
                     .then(() => {
                       setShowRoutePrompt(false);
-                      navigate('/workflow?filter=new');
+                      navigate('/worklist');
                     })
                     .catch(err => {
                       console.error("Routing error:", err);
                       setNoticeDialog({
                         title: "Argus Safety Web -- Webpage Dialog",
-                        message: "Failed to route case",
+                        message: isQcState ? "Failed to return case" : "Failed to route case",
                         icon: "warning"
                       });
                     });
-                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Route</button>
-                <button onClick={() => setShowRoutePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
+                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer active:bg-slate-100">
+                  {isQcState ? "Return" : "Route"}
+                </button>
+                <button onClick={() => setShowRoutePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer active:bg-slate-100">Cancel</button>
               </div>
             </div>
           </div>

@@ -14,7 +14,7 @@ export default function WorkflowPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
-  const filterParam = searchParams.get('filter') || 'open';
+  const filterParam = searchParams.get('filter') || 'action-items';
   
   const { cases, loading, fetchCases } = useCases();
   const { user } = useAuth();
@@ -288,7 +288,15 @@ export default function WorkflowPage() {
                           </Link>
                         </div>
                         <div className="text-xs text-slate-500 mt-1">
-                          <span className="bg-slate-100 px-2 py-0.5 rounded-md font-medium text-slate-600">{c.workflow_state}</span>
+                          <span className={cn(
+                            "px-2 py-0.5 rounded-md font-medium text-[11px]",
+                            c.workflow_state === 'QC_COMPLETED' ? "bg-emerald-100 text-emerald-800 border border-emerald-200" :
+                            c.workflow_state === 'PENDING_QC' ? "bg-purple-100 text-purple-800 border border-purple-200" :
+                            c.workflow_state === 'CLOSED' ? "bg-slate-100 text-slate-700 border border-slate-200" :
+                            "bg-blue-50 text-blue-700 border border-blue-200"
+                          )}>
+                            {c.workflow_state === 'QC_COMPLETED' ? 'QC Completed' : c.workflow_state === 'PENDING_QC' ? 'QC' : c.workflow_state === 'DRAFT' ? 'Data Entry' : c.workflow_state}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 align-top">

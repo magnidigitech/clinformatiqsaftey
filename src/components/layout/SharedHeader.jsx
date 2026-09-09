@@ -31,7 +31,7 @@ export default function SharedHeader() {
 
   const navTabs = [
     { name: 'Active Cases', path: '#' },
-    { name: 'Worklist', path: '/workflow' },
+    { name: 'Worklist', path: '/worklist' },
     { name: 'Case Actions', path: '#' },
     { name: 'Reports', path: '#' },
     { name: 'Utilities', path: '#' },
@@ -43,7 +43,7 @@ export default function SharedHeader() {
     if (location.pathname === '/admin') return 'Dashboards';
     if (location.pathname.startsWith('/cases/new') || location.pathname.startsWith('/cases/open')) return 'Case Actions';
     if (location.pathname.startsWith('/cases/')) return 'Active Cases';
-    if (location.pathname.startsWith('/workflow')) return 'Worklist';
+    if (location.pathname.startsWith('/workflow') || location.pathname.startsWith('/worklist')) return 'Worklist';
     return '';
   };
 
@@ -197,12 +197,8 @@ export default function SharedHeader() {
                 )}
                 
                 {tab.name === 'Worklist' && (
-                  <div className={cn(dropdownContainerClass, "w-52")}>
-                    <Link to="/workflow?filter=new" className={dropdownItemClass}><span>New</span></Link>
-                    <Link to="/workflow?filter=open" className={dropdownItemClass}><span>Open</span></Link>
-                    <Link to="/workflow?filter=action-items" className={dropdownItemClass}><span>Action Items</span></Link>
-                    <div className={cn(dropdownItemClass, "opacity-50 cursor-not-allowed")} title="Feature not available"><span>Contacts</span></div>
-                    <div className={cn(dropdownItemClass, "opacity-50 cursor-not-allowed")} title="Feature not available"><span>Reports</span></div>
+                  <div className={cn(dropdownContainerClass, "w-44")}>
+                    <Link to="/worklist" className={dropdownItemClass}><span>Action Items</span></Link>
                   </div>
                 )}
                 

@@ -99,7 +99,7 @@ export default function CaseToolbar({ onAction, caseId }) {
           
           {!isNewCasePage && (
             <>
-              <ToolbarBtn title="Worklist" icon={ListTodo} action="worklist" route="/workflow" />
+              <ToolbarBtn title="Worklist" icon={ListTodo} action="worklist" route="/worklist" />
               <ToolbarBtn title="Close Case" icon={XSquare} action="close_case" iconClass="text-red-500" />
               <ToolbarBtn title="Print Case" icon={Printer} action="print_case" />
               <ToolbarBtn title="Save Case" icon={Save} action="save_case" iconClass="text-blue-500" />

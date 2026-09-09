@@ -257,11 +257,32 @@ async function getById(req, res, next) {
       } catch (e) {}
     }
 
+    let qcRequestedBy = parsedAnalysis.qc_requested_by || null;
+    if (!qcRequestedBy && caseData.workflow_logs && caseData.workflow_logs.length > 0) {
+      const lastQcLog = [...caseData.workflow_logs].reverse().find(l => l.to_state === 'PENDING_QC');
+      if (lastQcLog && lastQcLog.user) {
+        qcRequestedBy = {
+          user_id: lastQcLog.user.user_id,
+          full_name: lastQcLog.user.full_name,
+          username: lastQcLog.user.username,
+        };
+      }
+    }
+    if (!qcRequestedBy && caseData.student) {
+      qcRequestedBy = {
+        user_id: caseData.student.user_id,
+        full_name: caseData.student.full_name,
+        username: caseData.student.username,
+        role: caseData.student.role,
+      };
+    }
+
     const caseResult = {
       ...caseData,
       case_country: caseData.case_country || caseData.reporters?.[0]?.country || null,
       attachments: parsedAnalysis.attachments || [],
       references: parsedAnalysis.references || [],
+      qc_requested_by: qcRequestedBy,
     };
 
     res.json({ success: true, data: caseResult });
@@ -606,13 +627,13 @@ async function getRevisions(req, res, next) {
 
 /**
  * POST /api/cases/:id/route
- * Route a case to a specific user for QC.
+ * Route a case to a specific user for QC or return back to requester.
  */
 async function routeCase(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const caseRecord = await validateCaseAccess(caseId, req.user);
-    const { assigned_to, comments } = req.body;
+    const { assigned_to, comments, action, workflow_state } = req.body;
 
     if (!assigned_to) {
       const err = new Error('Assigned user is required');
@@ -636,22 +657,61 @@ async function routeCase(req, res, next) {
     }
 
     const fromState = caseRecord.workflow_state;
+    const isReturn = action === 'RETURN' || (fromState === 'PENDING_QC' && workflow_state !== 'PENDING_QC');
+    const toState = isReturn ? (workflow_state || 'QC_COMPLETED') : (workflow_state || 'PENDING_QC');
+
+    let parsedAnalysis = {};
+    if (caseRecord.analysis_data) {
+      try {
+        parsedAnalysis = typeof caseRecord.analysis_data === 'string'
+          ? JSON.parse(caseRecord.analysis_data)
+          : caseRecord.analysis_data;
+      } catch (e) {}
+    }
+
+    if (!isReturn) {
+      // User is routing for QC: save their data and link to case
+      parsedAnalysis.qc_requested_by = {
+        user_id: req.user.user_id,
+        full_name: req.user.full_name,
+        username: req.user.username,
+        role: req.user.role,
+        routed_at: new Date().toISOString()
+      };
+      parsedAnalysis.last_routed_by = {
+        user_id: req.user.user_id,
+        full_name: req.user.full_name,
+        username: req.user.username,
+      };
+    } else {
+      // User is returning case from QC
+      parsedAnalysis.last_returned_by = {
+        user_id: req.user.user_id,
+        full_name: req.user.full_name,
+        username: req.user.username,
+        role: req.user.role,
+        returned_at: new Date().toISOString()
+      };
+    }
+
+    const defaultComments = isReturn ? 'Case returned with QC Completed' : 'Case routed for QC';
 
     const [updatedCase] = await prisma.$transaction([
       prisma.sptOrgCase.update({
         where: { case_id: caseId },
         data: { 
           assigned_to: assigneeId,
-          workflow_state: 'PENDING_QC'
+          workflow_state: toState,
+          analysis_data: JSON.stringify(parsedAnalysis)
         },
       }),
       prisma.workflowLog.create({
         data: {
           case_id: caseId,
           from_state: fromState,
-          to_state: 'PENDING_QC',
+          to_state: toState,
           actioned_by: req.user.user_id,
-          comments: comments || 'Case routed for QC',
+          comments: comments || defaultComments,
         },
       }),
     ]);

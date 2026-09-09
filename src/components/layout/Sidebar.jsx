@@ -14,7 +14,7 @@ export default function Sidebar() {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard, roles: ['STUDENT', 'INSTRUCTOR', 'ADMIN'] },
     { name: 'New Case', path: '/cases/new', icon: FilePlus, roles: ['STUDENT'] },
     { name: 'MedDRA', path: '/meddra', icon: Search, roles: ['STUDENT', 'INSTRUCTOR', 'ADMIN'] },
-    { name: 'Workflow', path: '/workflow', icon: GitBranch, roles: ['STUDENT'] },
+    { name: 'Worklist', path: '/worklist', icon: GitBranch, roles: ['STUDENT'] },
     { name: 'Instructor', path: '/instructor', icon: GraduationCap, roles: ['INSTRUCTOR', 'ADMIN'] },
     { name: 'Admin', path: '/admin', icon: Shield, roles: ['ADMIN'] },
   ];
