@@ -633,15 +633,30 @@ export default function CaseDetailPage() {
   const [validationErrors, setValidationErrors] = useState([]);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
   const [showRoutePrompt, setShowRoutePrompt] = useState(false);
+  const [showRouteToQcModal, setShowRouteToQcModal] = useState(false);
+  const [showCloseRouteModal, setShowCloseRouteModal] = useState(false);
+  const [closeRouteOption, setCloseRouteOption] = useState('ROUTE_BACK'); // 'ROUTE_BACK' or 'CLOSE_CASE'
+  const [qcFeedbackComments, setQcFeedbackComments] = useState('');
+  const [isRouting, setIsRouting] = useState(false);
   const [noticeDialog, setNoticeDialog] = useState(null);
 
   const [orgUsers, setOrgUsers] = useState([]);
   const [selectedAssignee, setSelectedAssignee] = useState('');
   const [routeComments, setRouteComments] = useState('');
 
-  const isQcState = caseData?.workflow_state === 'PENDING_QC';
+  const handleSaveRef = useRef(null);
+
+  const isQcState = caseData?.workflow_state === 'PENDING_QC' || caseData?.workflow_state === 'QC';
+  const isDataEntryState = !caseData?.workflow_state || caseData?.workflow_state === 'DRAFT';
+  const isQcCompleted = caseData?.workflow_state === 'QC_COMPLETED';
+
+  const caseCreator = caseData?.student || null;
+  const caseCreatorName = caseCreator?.full_name || caseCreator?.username || 'Original Creator';
 
   const returnUser = useMemo(() => {
+    if (caseData?.student) {
+      return caseData.student;
+    }
     if (caseData?.qc_requested_by) {
       return caseData.qc_requested_by;
     }
@@ -649,23 +664,81 @@ export default function CaseDetailPage() {
       const lastQcLog = [...caseData.workflow_logs].reverse().find(l => l.to_state === 'PENDING_QC');
       if (lastQcLog?.user) return lastQcLog.user;
     }
-    return caseData?.student || null;
+    return null;
   }, [caseData]);
 
   useEffect(() => {
-    if (showRoutePrompt) {
-      if (isQcState && returnUser) {
-        setSelectedAssignee(String(returnUser.user_id || returnUser.id));
-        setRouteComments('');
-      } else if (!isQcState) {
-        setSelectedAssignee('');
-        setRouteComments('');
-        api.get('/users/org').then(res => {
-          setOrgUsers(res.data.data);
-        }).catch(err => console.error("Failed to fetch org users:", err));
-      }
+    if (showRouteToQcModal || showRoutePrompt) {
+      setSelectedAssignee('');
+      setRouteComments('');
+      api.get('/users/org').then(res => {
+        setOrgUsers(res.data.data || []);
+      }).catch(err => console.error("Failed to fetch org users:", err));
     }
-  }, [showRoutePrompt, isQcState, returnUser]);
+  }, [showRouteToQcModal, showRoutePrompt]);
+
+  const handleRouteToQcClick = () => {
+    setSelectedAssignee('');
+    setRouteComments('');
+    setShowRouteToQcModal(true);
+  };
+
+  const handleCloseRouteClick = async () => {
+    if (handleSaveRef.current) {
+      await handleSaveRef.current();
+    }
+    setCloseRouteOption('ROUTE_BACK');
+    setQcFeedbackComments('');
+    setShowCloseRouteModal(true);
+  };
+
+  const handleConfirmRouteToQc = async () => {
+    if (!selectedAssignee) {
+      alert("Please select a QC user to assign this case to.");
+      return;
+    }
+    setIsRouting(true);
+    try {
+      await api.post(`/cases/${id}/route`, {
+        action: 'ROUTE_TO_QC',
+        assigned_to: selectedAssignee,
+        comments: routeComments || 'Routed to QC for review'
+      });
+      setShowRouteToQcModal(false);
+      navigate('/worklist');
+    } catch (err) {
+      console.error("Failed to route case to QC:", err);
+      alert("Failed to route case: " + (err.response?.data?.message || err.message));
+    } finally {
+      setIsRouting(false);
+    }
+  };
+
+  const handleConfirmCloseRoute = async () => {
+    setIsRouting(true);
+    try {
+      if (closeRouteOption === 'ROUTE_BACK') {
+        await api.post(`/cases/${id}/route`, {
+          action: 'ROUTE_BACK_TO_CREATOR',
+          comments: qcFeedbackComments || 'QC feedback: routed back to creator for corrections'
+        });
+        setShowCloseRouteModal(false);
+        navigate('/worklist');
+      } else if (closeRouteOption === 'CLOSE_CASE') {
+        await api.post(`/cases/${id}/route`, {
+          action: 'CLOSE_CASE',
+          comments: qcFeedbackComments || 'QC review completed and approved. Case closed.'
+        });
+        setShowCloseRouteModal(false);
+        navigate('/worklist');
+      }
+    } catch (err) {
+      console.error("Failed to complete QC routing action:", err);
+      alert("Failed to complete action: " + (err.response?.data?.message || err.message));
+    } finally {
+      setIsRouting(false);
+    }
+  };
 
   // Save modal state
   const [isSaving, setIsSaving] = useState(false);
@@ -2050,6 +2123,8 @@ export default function CaseDetailPage() {
       }
     };
 
+    handleSaveRef.current = handleSave;
+
     const handlePrint = () => {
       setShowPrintModal(true);
     };
@@ -2077,10 +2152,12 @@ export default function CaseDetailPage() {
       }
 
       if (eventTabs.length === 0) {
-        errors.push("EVENTS: At least one Event is required.");
+        errors.push("EVENTS: At least one Adverse Event is required.");
       } else {
         eventTabs.forEach((e, idx) => {
-          if (!e.description) errors.push(`EVENTS: Event Description is required (Event ${idx + 1}).`);
+          if (!e.reactionReported && !e.lltDesc && !e.ptDesc) {
+            errors.push(`EVENTS: Event Description or Reaction is required (Event ${idx + 1}).`);
+          }
         });
       }
 
@@ -2090,24 +2167,19 @@ export default function CaseDetailPage() {
     };
 
     const handleCloseCase = () => {
-      if (!caseData) return;
       if (isReadOnly) {
         setNoticeDialog({
           title: "Argus Safety Web -- Webpage Dialog",
-          message: "This case is read-only. You cannot close it.",
+          message: "This case is read-only.",
           icon: "warning"
         });
         return;
       }
-      if (caseData.workflow_state !== 'QC_COMPLETED' && caseData.workflow_state !== 'PENDING_QC' && caseData.assigned_to !== user?.user_id) {
-        setNoticeDialog({
-          title: "Argus Safety Web -- Webpage Dialog",
-          message: "You cannot close this case. It must be routed for QC.",
-          icon: "warning"
-        });
-        return;
+      if (isQcState) {
+        handleCloseRouteClick();
+      } else {
+        setShowClosePrompt(true);
       }
-      setShowClosePrompt(true);
     };
 
     const handleRouteCase = () => {
@@ -2119,10 +2191,11 @@ export default function CaseDetailPage() {
         });
         return;
       }
-      setShowRoutePrompt(true);
-      api.get('/users/org').then(res => {
-        setOrgUsers(res.data.data);
-      }).catch(err => console.error("Failed to fetch org users:", err));
+      if (isQcState) {
+        handleCloseRouteClick();
+      } else {
+        handleRouteToQcClick();
+      }
     };
 
     const handleLockCase = async () => {
@@ -4758,9 +4831,32 @@ export default function CaseDetailPage() {
                   <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('routingComments') && "border-b-0")}>
                     <span>Routing Comments ({routingComments.length})</span>
                     <div className="flex items-center gap-1">
-                      <div className="flex gap-0.5">
-                        <button type="button" className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200">Return</button>
-                        <button type="button" onClick={() => window.dispatchEvent(new Event('route_case'))} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200">Route...</button>
+                      <div className="flex gap-1 items-center">
+                        {isDataEntryState && (
+                          <button 
+                            type="button" 
+                            onClick={() => window.dispatchEvent(new Event('route_case'))} 
+                            className="h-[20px] px-2 text-[10px] bg-blue-50 text-blue-700 font-semibold border border-blue-400 hover:bg-blue-100 flex items-center gap-1 shadow-xs"
+                            title="Route this case to QC team for review"
+                          >
+                            <span>Route to QC</span>
+                          </button>
+                        )}
+                        {isQcState && (
+                          <button 
+                            type="button" 
+                            onClick={() => window.dispatchEvent(new Event('route_case'))} 
+                            className="h-[20px] px-2 text-[10px] bg-purple-50 text-purple-700 font-semibold border border-purple-400 hover:bg-purple-100 flex items-center gap-1 shadow-xs"
+                            title="Complete QC review and Route Back or Close Case"
+                          >
+                            <span>Close / Route</span>
+                          </button>
+                        )}
+                        {isQcCompleted && (
+                          <span className="h-[20px] px-2 text-[10px] bg-emerald-50 text-emerald-700 font-semibold border border-emerald-300 flex items-center gap-1">
+                            ✓ QC Completed
+                          </span>
+                        )}
                       </div>
                       <CollapseBtn sectionKey="routingComments" className="ml-1" />
                     </div>
@@ -5464,14 +5560,14 @@ export default function CaseDetailPage() {
                   setShowClosePrompt(false);
                   window.dispatchEvent(new CustomEvent('save_case'));
                   setTimeout(() => {
-                    setShowRoutePrompt(true);
-                  }, 1000);
-                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Yes</button>
+                    navigate('/worklist');
+                  }, 500);
+                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer">Yes</button>
                 <button onClick={() => {
                   setShowClosePrompt(false);
-                  setShowRoutePrompt(true);
-                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">No</button>
-                <button onClick={() => setShowClosePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
+                  navigate('/worklist');
+                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer">No</button>
+                <button onClick={() => setShowClosePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer">Cancel</button>
               </div>
             </div>
           </div>
@@ -5517,82 +5613,219 @@ export default function CaseDetailPage() {
           </div>
         )}
 
-        {/* Route / Return Prompt Modal */}
-        {showRoutePrompt && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
-            <div className="bg-white w-[420px] border-[2px] border-slate-200 rounded-t-[4px] shadow-xl flex flex-col font-tahoma overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center select-none">
-                <span className="text-white font-bold text-[11px] tracking-wide">
-                  {isQcState ? "Return Case" : "Route Case"}
+        {/* Route to QC Modal (For Data Entry Users) */}
+        {showRouteToQcModal && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+            <div className="bg-white w-[460px] border-[2px] border-slate-300 rounded-t-[4px] shadow-2xl flex flex-col font-tahoma overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-3 py-1.5 flex justify-between items-center select-none">
+                <span className="text-white font-bold text-[11px] tracking-wide flex items-center gap-1.5">
+                  <span>📋</span> Route Case to Quality Control (QC)
                 </span>
-                <button onClick={() => setShowRoutePrompt(false)} className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold cursor-pointer">✕</button>
-              </div>
-              <div className="bg-white border-b border-gray-400 p-6 flex flex-col gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="text-[32px] text-blue-600 leading-none pb-2">?</div>
-                  <div className="text-[12px] text-black font-semibold">
-                    {isQcState ? "Select User to Return:" : "Select User to Route for QC:"}
-                  </div>
-                </div>
-                <select className={sel} value={selectedAssignee} onChange={(e) => setSelectedAssignee(e.target.value)}>
-                  {isQcState ? (
-                    returnUser ? (
-                      <option value={returnUser.user_id || returnUser.id}>
-                        {returnUser.full_name || returnUser.username} {returnUser.role ? `(${returnUser.role})` : ''}
-                      </option>
-                    ) : (
-                      <option value="">-- No Requester Found --</option>
-                    )
-                  ) : (
-                    <>
-                      <option value="">-- Select User --</option>
-                      {orgUsers.map(u => (
-                        <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
-                      ))}
-                    </>
-                  )}
-                </select>
-                <textarea
-                  className="w-full h-16 border border-slate-300 rounded p-1 text-[11px] font-sans"
-                  placeholder={isQcState ? "Return comments..." : "Routing comments..."}
-                  value={routeComments}
-                  onChange={(e) => setRouteComments(e.target.value)}
-                />
-              </div>
-              <div className="bg-slate-50 px-4 py-2 flex justify-center gap-2 border-b border-gray-400">
-                <button onClick={() => {
-                  if (!selectedAssignee) {
-                    setNoticeDialog({
-                      title: "Argus Safety Web -- Webpage Dialog",
-                      message: isQcState ? "Please select a user to return to." : "Please select a user to route to.",
-                      icon: "warning"
-                    });
-                    return;
-                  }
-                  api.post(`/cases/${id}/route`, {
-                    assigned_to: selectedAssignee,
-                    comments: routeComments,
-                    action: isQcState ? 'RETURN' : 'ROUTE',
-                    workflow_state: isQcState ? 'QC_COMPLETED' : 'PENDING_QC',
-                    routingComments: routingComments
-                  })
-                    .then(() => {
-                      autoLockedRef.current = false;
-                      setShowRoutePrompt(false);
-                      navigate('/worklist');
-                    })
-                    .catch(err => {
-                      console.error("Routing error:", err);
-                      setNoticeDialog({
-                        title: "Argus Safety Web -- Webpage Dialog",
-                        message: isQcState ? "Failed to return case" : "Failed to route case",
-                        icon: "warning"
-                      });
-                    });
-                }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer active:bg-slate-100">
-                  {isQcState ? "Return" : "Route"}
+                <button 
+                  onClick={() => setShowRouteToQcModal(false)} 
+                  className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold cursor-pointer"
+                >
+                  ✕
                 </button>
-                <button onClick={() => setShowRoutePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm cursor-pointer active:bg-slate-100">Cancel</button>
+              </div>
+              <div className="bg-white p-5 flex flex-col gap-3.5 border-b border-gray-300">
+                <div className="bg-blue-50 border border-blue-200 rounded p-2 text-[11px] text-blue-900 leading-relaxed">
+                  You are routing this case from <strong>Data Entry</strong> to <strong>QC Pending</strong>. Please select the QC team member to review the case.
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Select QC Reviewer <span className="text-red-500">*</span></label>
+                  <select 
+                    className={cn(sel, "w-full text-[11px]")} 
+                    value={selectedAssignee} 
+                    onChange={(e) => setSelectedAssignee(e.target.value)}
+                  >
+                    <option value="">-- Select QC User --</option>
+                    {orgUsers.map(u => (
+                      <option key={u.user_id} value={u.user_id}>
+                        {u.full_name || u.username} ({u.role || 'QC'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Routing Comments / Notes</label>
+                  <textarea
+                    className="w-full h-20 border border-slate-300 rounded p-1.5 text-[11px] font-sans focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                    placeholder="Provide any context or notes for the QC team..."
+                    value={routeComments}
+                    onChange={(e) => setRouteComments(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="bg-slate-50 px-4 py-2.5 flex justify-end gap-2 border-b border-gray-400">
+                <button 
+                  disabled={isRouting}
+                  onClick={() => setShowRouteToQcModal(false)} 
+                  className="px-3 py-1 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-100 shadow-sm cursor-pointer active:bg-slate-200"
+                >
+                  Cancel
+                </button>
+                <button 
+                  disabled={isRouting}
+                  onClick={handleConfirmRouteToQc} 
+                  className="px-4 py-1 text-[11px] bg-brand-primary text-white font-semibold border border-emerald-700 hover:bg-brand-primary/90 shadow-sm cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isRouting ? 'Routing...' : 'Route to QC →'}
+                </button>
+              </div>
+              <div className="bg-slate-100 px-3 py-1 text-[10px] text-gray-500 flex justify-between items-center">
+                <span>Status transition: Data Entry → QC Pending</span>
+                <span>🌐 Argus Safety Web</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Close / Route Modal (For QC Reviewers) */}
+        {showCloseRouteModal && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+            <div className="bg-white w-[520px] border-[2px] border-slate-300 rounded-t-[4px] shadow-2xl flex flex-col font-tahoma overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-3 py-1.5 flex justify-between items-center select-none">
+                <span className="text-white font-bold text-[11px] tracking-wide flex items-center gap-1.5">
+                  <span>⚖️</span> QC Review Action: Close / Route Case
+                </span>
+                <button 
+                  onClick={() => setShowCloseRouteModal(false)} 
+                  className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="bg-white p-5 flex flex-col gap-4 border-b border-gray-300">
+                <div className="bg-emerald-50 border border-emerald-200 rounded p-2 text-[11px] text-emerald-900 flex items-center gap-2">
+                  <span className="text-emerald-600 font-bold">✓</span>
+                  <span>All case modifications have been automatically saved. Please choose the next workflow action:</span>
+                </div>
+
+                {/* Option selection cards */}
+                <div className="space-y-2.5">
+                  {/* Option A: Route Back to Creator */}
+                  <label 
+                    className={cn(
+                      "block p-3 rounded border transition-all cursor-pointer",
+                      closeRouteOption === 'ROUTE_BACK' 
+                        ? "border-amber-400 bg-amber-50/50 shadow-xs ring-1 ring-amber-400" 
+                        : "border-slate-200 hover:border-slate-300 bg-white"
+                    )}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input 
+                        type="radio" 
+                        name="closeRouteOption" 
+                        value="ROUTE_BACK"
+                        checked={closeRouteOption === 'ROUTE_BACK'}
+                        onChange={() => setCloseRouteOption('ROUTE_BACK')}
+                        className="mt-0.5 text-amber-600 focus:ring-amber-500"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[12px] text-gray-900">
+                            Option A: Route Back to Creator
+                          </span>
+                          <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded">
+                            Status: Data Entry
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 mt-1">
+                          Issues or missing information identified. Assigns the case back to original creator: <strong className="text-gray-800">{caseCreatorName}</strong>. Once corrected, creator will re-submit to QC.
+                        </p>
+                      </div>
+                    </div>
+                  </label>
+
+                  {/* Option B: Close Case */}
+                  <label 
+                    className={cn(
+                      "block p-3 rounded border transition-all cursor-pointer",
+                      closeRouteOption === 'CLOSE_CASE' 
+                        ? "border-emerald-500 bg-emerald-50/50 shadow-xs ring-1 ring-emerald-500" 
+                        : "border-slate-200 hover:border-slate-300 bg-white"
+                    )}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input 
+                        type="radio" 
+                        name="closeRouteOption" 
+                        value="CLOSE_CASE"
+                        checked={closeRouteOption === 'CLOSE_CASE'}
+                        onChange={() => setCloseRouteOption('CLOSE_CASE')}
+                        className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[12px] text-gray-900">
+                            Option B: Close Case (QC Completed)
+                          </span>
+                          <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded">
+                            Status: QC Completed
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 mt-1">
+                          QC review is successfully completed. Case information is verified and accurate. Case will leave the QC queue.
+                        </p>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* QC Feedback textarea */}
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                    {closeRouteOption === 'ROUTE_BACK' 
+                      ? "QC Feedback / Correction Instructions for Creator *" 
+                      : "QC Completion Notes (Optional)"}
+                  </label>
+                  <textarea
+                    className="w-full h-20 border border-slate-300 rounded p-2 text-[11px] font-sans focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                    placeholder={closeRouteOption === 'ROUTE_BACK' 
+                      ? "Specify what corrections or missing information the creator needs to address..." 
+                      : "Add any final comments on QC verification..."}
+                    value={qcFeedbackComments}
+                    onChange={(e) => setQcFeedbackComments(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="bg-slate-50 px-4 py-2.5 flex justify-end gap-2 border-b border-gray-400">
+                <button 
+                  disabled={isRouting}
+                  onClick={() => setShowCloseRouteModal(false)} 
+                  className="px-3 py-1 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-100 shadow-sm cursor-pointer active:bg-slate-200"
+                >
+                  Cancel
+                </button>
+                <button 
+                  disabled={isRouting}
+                  onClick={handleConfirmCloseRoute} 
+                  className={cn(
+                    "px-4 py-1 text-[11px] text-white font-semibold shadow-sm cursor-pointer disabled:opacity-50 flex items-center gap-1.5",
+                    closeRouteOption === 'ROUTE_BACK' 
+                      ? "bg-amber-600 border border-amber-700 hover:bg-amber-500" 
+                      : "bg-emerald-600 border border-emerald-700 hover:bg-emerald-500"
+                  )}
+                >
+                  {isRouting ? 'Processing...' : (
+                    closeRouteOption === 'ROUTE_BACK' ? '↩ Route Back to Creator' : '✓ Close Case (QC Completed)'
+                  )}
+                </button>
+              </div>
+
+              <div className="bg-slate-100 px-3 py-1 text-[10px] text-gray-500 flex justify-between items-center">
+                <span>
+                  {closeRouteOption === 'ROUTE_BACK' 
+                    ? `QC Review → Data Entry (Assignee: ${caseCreatorName})` 
+                    : 'QC Review → QC Completed'}
+                </span>
+                <span>🌐 Argus Safety Web</span>
               </div>
             </div>
           </div>

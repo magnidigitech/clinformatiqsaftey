@@ -31,6 +31,7 @@ export default function WorkflowPage() {
   const [searchFilter, setSearchFilter] = useState('Case Number');
   const [searchValue, setSearchValue] = useState('');
   const [appliedSearch, setAppliedSearch] = useState({ filter: 'Case Number', value: '' });
+  const [groupMembership, setGroupMembership] = useState('All');
 
   const [showRoutePrompt, setShowRoutePrompt] = useState(false);
   const [selectedAssignee, setSelectedAssignee] = useState('');
@@ -135,6 +136,14 @@ export default function WorkflowPage() {
     
     if (!matchesCategory) return false;
 
+    if (groupMembership === 'Data Entry') {
+      if (c.workflow_state && c.workflow_state !== 'DRAFT') return false;
+    } else if (groupMembership === 'Quality Control') {
+      if (c.workflow_state !== 'PENDING_QC' && c.workflow_state !== 'QC') return false;
+    } else if (groupMembership === 'QC Completed') {
+      if (c.workflow_state !== 'QC_COMPLETED') return false;
+    }
+
     if (!appliedSearch.value || appliedSearch.value.trim() === '') return true;
 
     const query = appliedSearch.value.toLowerCase().trim();
@@ -222,10 +231,15 @@ export default function WorkflowPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Group Membership</label>
-                  <select className={sel}>
+                  <select 
+                    className={sel}
+                    value={groupMembership}
+                    onChange={e => setGroupMembership(e.target.value)}
+                  >
                     <option>All</option>
                     <option>Data Entry</option>
                     <option>Quality Control</option>
+                    <option>QC Completed</option>
                     <option>Medical Review</option>
                   </select>
                 </div>

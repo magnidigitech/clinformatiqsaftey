@@ -639,30 +639,61 @@ async function routeCase(req, res, next) {
     const caseRecord = await validateCaseAccess(caseId, req.user);
     const { assigned_to, comments, action, workflow_state } = req.body;
 
-    if (!assigned_to) {
-      const err = new Error('Assigned user is required');
-      err.statusCode = 400;
-      throw err;
-    }
-
+    let toState;
+    let defaultComments;
     let assigneeId;
-    if (/^\d+$/.test(String(assigned_to))) {
-      assigneeId = parseInt(assigned_to, 10);
-    } else {
-      const targetUser = await prisma.user.findUnique({
-        where: { username: assigned_to }
-      });
-      if (!targetUser) {
-        const err = new Error('Assigned user not found');
-        err.statusCode = 404;
+
+    if (action === 'ROUTE_BACK_TO_CREATOR') {
+      // Option A: Route Back to Creator
+      toState = 'DRAFT';
+      assigneeId = caseRecord.student_id; // Always original case creator!
+      defaultComments = 'Case routed back to creator for corrections';
+    } else if (action === 'CLOSE_CASE') {
+      // Option B: Close Case
+      toState = 'QC_COMPLETED';
+      assigneeId = caseRecord.student_id || caseRecord.assigned_to;
+      defaultComments = 'QC Review completed - Case closed';
+    } else if (action === 'ROUTE_TO_QC' || (!action && !workflow_state)) {
+      // Initial Data Entry -> Route to QC
+      toState = 'PENDING_QC';
+      defaultComments = 'Case routed for QC review';
+      if (!assigned_to) {
+        const err = new Error('Assigned user is required to route for QC');
+        err.statusCode = 400;
         throw err;
       }
-      assigneeId = targetUser.user_id;
+      if (/^\d+$/.test(String(assigned_to))) {
+        assigneeId = parseInt(assigned_to, 10);
+      } else {
+        const targetUser = await prisma.user.findUnique({
+          where: { username: assigned_to }
+        });
+        if (!targetUser) {
+          const err = new Error('Assigned user not found');
+          err.statusCode = 404;
+          throw err;
+        }
+        assigneeId = targetUser.user_id;
+      }
+    } else {
+      // Generic fallback for custom transitions
+      toState = workflow_state || 'PENDING_QC';
+      defaultComments = 'Case routed';
+      if (assigned_to) {
+        if (/^\d+$/.test(String(assigned_to))) {
+          assigneeId = parseInt(assigned_to, 10);
+        } else {
+          const targetUser = await prisma.user.findUnique({
+            where: { username: assigned_to }
+          });
+          if (targetUser) assigneeId = targetUser.user_id;
+        }
+      } else {
+        assigneeId = caseRecord.assigned_to || caseRecord.student_id;
+      }
     }
 
     const fromState = caseRecord.workflow_state;
-    const isReturn = action === 'RETURN' || (fromState === 'PENDING_QC' && workflow_state !== 'PENDING_QC');
-    const toState = isReturn ? (workflow_state || 'QC_COMPLETED') : (workflow_state || 'PENDING_QC');
 
     let parsedAnalysis = {};
     if (caseRecord.analysis_data) {
@@ -673,8 +704,7 @@ async function routeCase(req, res, next) {
       } catch (e) {}
     }
 
-    if (!isReturn) {
-      // User is routing for QC: save their data and link to case
+    if (action === 'ROUTE_TO_QC' || toState === 'PENDING_QC') {
       parsedAnalysis.qc_requested_by = {
         user_id: req.user.user_id,
         full_name: req.user.full_name,
@@ -687,18 +717,26 @@ async function routeCase(req, res, next) {
         full_name: req.user.full_name,
         username: req.user.username,
       };
-    } else {
-      // User is returning case from QC
+    } else if (action === 'ROUTE_BACK_TO_CREATOR' || toState === 'DRAFT') {
       parsedAnalysis.last_returned_by = {
         user_id: req.user.user_id,
         full_name: req.user.full_name,
         username: req.user.username,
         role: req.user.role,
-        returned_at: new Date().toISOString()
+        returned_at: new Date().toISOString(),
+        action: 'ROUTE_BACK_TO_CREATOR'
+      };
+    } else if (action === 'CLOSE_CASE' || toState === 'QC_COMPLETED') {
+      parsedAnalysis.qc_closed_by = {
+        user_id: req.user.user_id,
+        full_name: req.user.full_name,
+        username: req.user.username,
+        role: req.user.role,
+        closed_at: new Date().toISOString(),
+        action: 'CLOSE_CASE'
       };
     }
 
-    const defaultComments = isReturn ? 'Case returned with QC Completed' : 'Case routed for QC';
     const commentText = comments || defaultComments;
 
     const newRoutingComment = {
