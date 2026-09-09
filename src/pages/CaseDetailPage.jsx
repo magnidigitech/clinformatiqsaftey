@@ -114,6 +114,12 @@ const calculateAgeGroup = (ageVal, ageUnit = 'Years') => {
   return 'Geriatric';
 };
 
+const DEFAULT_DATASHEETS = [
+  { name: 'Core Data Sheet', licenses: [{ name: 'Global' }] },
+  { name: 'USPI', licenses: [{ name: 'US (Inv: 48,811)' }] },
+  { name: 'SmPC', licenses: [{ name: 'EU (Inv: )' }] }
+];
+
 export default function CaseDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -138,20 +144,7 @@ export default function CaseDetailPage() {
       formulation: '',
       authCountry: '',
       role: 'Suspect',
-      datasheets: [
-        {
-          name: 'Core Data Sheet',
-          licenses: [{ name: 'Global' }]
-        },
-        {
-          name: 'USPI',
-          licenses: [{ name: 'US (Inv: 48,811)' }]
-        },
-        {
-          name: 'SmPC',
-          licenses: [{ name: 'EU (Inv: )' }]
-        }
-      ]
+      datasheets: DEFAULT_DATASHEETS
     }
   ]);
   const [activeProductTab, setActiveProductTab] = useState(1);
@@ -175,7 +168,24 @@ export default function CaseDetailPage() {
     }));
   };
 
-  const handleDeleteProductTab = (idToDelete) => {
+  const [deletedProductIds, setDeletedProductIds] = useState([]);
+  const [deletedEventIds, setDeletedEventIds] = useState([]);
+
+  const handleDeleteProductTab = async (idToDelete) => {
+    const target = productTabs.find(t => t.id === idToDelete);
+    const backendId = target?.backendId || (typeof idToDelete === 'number' && idToDelete < 1000000000000 ? idToDelete : null);
+
+    if (backendId) {
+      setDeletedProductIds(prev => [...prev, backendId]);
+      if (id) {
+        try {
+          await api.delete(`/cases/${id}/products/${backendId}`);
+        } catch (err) {
+          console.warn("Failed to delete product immediately from database:", err);
+        }
+      }
+    }
+
     setProductTabs(prev => {
       const newTabs = prev.filter(t => t.id !== idToDelete);
       if (activeProductTab === idToDelete && newTabs.length > 0) {
@@ -185,6 +195,8 @@ export default function CaseDetailPage() {
       }
       return newTabs;
     });
+
+    setEventAssessments(prev => prev.filter(a => a.productId !== idToDelete && a.productId !== backendId));
   };
 
   const [eventTabs, setEventTabs] = useState([
@@ -230,7 +242,21 @@ export default function CaseDetailPage() {
     }));
   };
 
-  const handleDeleteEventTab = (idToDelete) => {
+  const handleDeleteEventTab = async (idToDelete) => {
+    const target = eventTabs.find(t => t.id === idToDelete);
+    const backendId = target?.backendId || (typeof idToDelete === 'number' && idToDelete < 1000000000000 ? idToDelete : null);
+
+    if (backendId) {
+      setDeletedEventIds(prev => [...prev, backendId]);
+      if (id) {
+        try {
+          await api.delete(`/cases/${id}/events/${backendId}`);
+        } catch (err) {
+          console.warn("Failed to delete event immediately from database:", err);
+        }
+      }
+    }
+
     setEventTabs(prev => {
       const newTabs = prev.filter(t => t.id !== idToDelete);
       if (activeEventTab === idToDelete && newTabs.length > 0) {
@@ -240,6 +266,8 @@ export default function CaseDetailPage() {
       }
       return newTabs;
     });
+
+    setEventAssessments(prev => prev.filter(a => a.eventId !== idToDelete && a.eventId !== backendId));
   };
 
   const [eventAssessments, setEventAssessments] = useState([]);
@@ -299,39 +327,113 @@ export default function CaseDetailPage() {
   const fileInputRef = useRef(null);
   const [attachments, setAttachments] = useState([]);
   const [selectedAttachmentId, setSelectedAttachmentId] = useState(null);
+  const [targetRowForUpload, setTargetRowForUpload] = useState(null);
+  const [previewAttachment, setPreviewAttachment] = useState(null);
+
+  const triggerAttachNew = () => {
+    setTargetRowForUpload(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const triggerAttachForRow = (rowId) => {
+    setTargetRowForUpload(rowId);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
 
   const handleAttachFile = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const newAttachment = {
-        id: Date.now(),
-        classification: 'Attachment',
-        date: new Date().toLocaleDateString('en-GB').replace(/\//g, '-').toUpperCase(),
-        keywords: file.name,
-        description: 'Uploaded File',
-        filename: file.name
+      const dateStr = new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric'
+      }).format(new Date()).toUpperCase().replace(/ /g, '-');
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        let updated = [];
+        if (targetRowForUpload) {
+          updated = attachments.map(a => {
+            if (a.id === targetRowForUpload) {
+              return {
+                ...a,
+                filename: file.name,
+                fileSize: file.size,
+                fileType: file.type || 'application/octet-stream',
+                fileData: reader.result,
+                keywords: a.keywords || file.name,
+                description: a.description || 'Uploaded File'
+              };
+            }
+            return a;
+          });
+          setSelectedAttachmentId(targetRowForUpload);
+          const found = updated.find(a => a.id === targetRowForUpload);
+          if (found) setPreviewAttachment(found);
+        } else {
+          const newId = Date.now();
+          const newAttachment = {
+            id: newId,
+            classification: 'Attachment',
+            date: dateStr,
+            keywords: file.name,
+            description: 'Uploaded File',
+            filename: file.name,
+            fileSize: file.size,
+            fileType: file.type || 'application/octet-stream',
+            fileData: reader.result
+          };
+          updated = [...attachments, newAttachment];
+          setSelectedAttachmentId(newId);
+          setPreviewAttachment(newAttachment);
+        }
+        setAttachments(updated);
+        setTargetRowForUpload(null);
+
+        // Auto-save to server immediately
+        if (id) {
+          try {
+            await api.put(`/cases/${id}`, { attachments: updated });
+          } catch (err) {
+            console.warn("Auto-saving attachments failed:", err);
+          }
+        }
       };
-      setAttachments(prev => [...prev, newAttachment]);
-      setSelectedAttachmentId(newAttachment.id);
+      reader.readAsDataURL(file);
     }
     if (e.target) e.target.value = '';
   };
 
   const handleAddAttachment = () => {
-    const newAttachment = { id: Date.now(), classification: '', date: '00-MMM-0000', keywords: '', description: '', filename: '' };
+    const dateStr = new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric'
+    }).format(new Date()).toUpperCase().replace(/ /g, '-');
+    const newAttachment = { id: Date.now(), classification: 'Attachment', date: dateStr, keywords: '', description: '', filename: '' };
     setAttachments(prev => [...prev, newAttachment]);
     setSelectedAttachmentId(newAttachment.id);
   };
 
-  const handleDeleteAttachment = () => {
+  const handleDeleteAttachment = async () => {
     if (selectedAttachmentId) {
-      setAttachments(prev => prev.filter(a => a.id !== selectedAttachmentId));
+      const updated = attachments.filter(a => a.id !== selectedAttachmentId);
+      setAttachments(updated);
       setSelectedAttachmentId(null);
+      if (id) {
+        try {
+          await api.put(`/cases/${id}`, { attachments: updated });
+        } catch (err) {
+          console.warn("Auto-saving attachments delete failed:", err);
+        }
+      }
     }
   };
 
-  const updateAttachment = (id, field, value) => {
-    setAttachments(prev => prev.map(a => a.id === id ? { ...a, [field]: value } : a));
+  const updateAttachment = (idToUpdate, field, value) => {
+    setAttachments(prev => prev.map(a => a.id === idToUpdate ? { ...a, [field]: value } : a));
   };
 
   const [references, setReferences] = useState([]);
@@ -464,6 +566,7 @@ export default function CaseDetailPage() {
   const [validationErrors, setValidationErrors] = useState([]);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
   const [showRoutePrompt, setShowRoutePrompt] = useState(false);
+  const [noticeDialog, setNoticeDialog] = useState(null);
 
   const [orgUsers, setOrgUsers] = useState([]);
   const [selectedAssignee, setSelectedAssignee] = useState('');
@@ -596,6 +699,23 @@ export default function CaseDetailPage() {
         }
       }
 
+      // Hydrate Attachments & References
+      if (parsedAnalysis.attachments && Array.isArray(parsedAnalysis.attachments)) {
+        setAttachments(parsedAnalysis.attachments);
+      } else if (data.attachments && Array.isArray(data.attachments)) {
+        setAttachments(data.attachments);
+      } else {
+        setAttachments([]);
+      }
+
+      if (parsedAnalysis.references && Array.isArray(parsedAnalysis.references)) {
+        setReferences(parsedAnalysis.references);
+      } else if (data.references && Array.isArray(data.references)) {
+        setReferences(data.references);
+      } else {
+        setReferences([]);
+      }
+
       // Hydrate core form fields
       setForm(prev => {
         const p = data.patient || {};
@@ -688,11 +808,7 @@ export default function CaseDetailPage() {
           role: 'Suspect',
           action: 'Unknown',
           indications: prod.indication ? [{ id: 1, reported: prod.indication, coded: '' }] : [],
-          datasheets: [
-            { name: 'Core Data Sheet', licenses: [{ name: 'Global' }] },
-            { name: 'USPI', licenses: [{ name: 'US (Inv: 48,811)' }] },
-            { name: 'SmPC', licenses: [{ name: 'EU (Inv: )' }] }
-          ]
+          datasheets: DEFAULT_DATASHEETS
         })));
         setActiveProductTab(data.products[0].product_id);
       }
@@ -1278,6 +1394,9 @@ export default function CaseDetailPage() {
           closureDate: form.closureDate || '',
           lockedOrClosedBy: form.lockedOrClosedBy || '',
           caseLockNotes: form.caseLockNotes || '',
+          // Additional Info Data
+          attachments: attachments || [],
+          references: references || [],
         };
 
         // Save General Case Info & Analysis
@@ -1289,6 +1408,8 @@ export default function CaseDetailPage() {
           serious_flag: (form.caseSerious === 'Yes' || form.caseSeriousSummary === 'Yes') ? 'Y' : 'N',
           case_narrative: form.caseNarrative || '',
           analysis_data: JSON.stringify(analysisDataObj),
+          attachments: attachments || [],
+          references: references || [],
           patient_history_data: JSON.stringify(patientHistories),
           lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
         });
@@ -1354,6 +1475,20 @@ export default function CaseDetailPage() {
               console.warn("Reporter save failed", e);
             }
           }
+        }
+
+        // Delete removed products from database
+        for (const prodId of deletedProductIds) {
+          try {
+            await api.delete(`/cases/${id}/products/${prodId}`);
+          } catch (e) {}
+        }
+
+        // Delete removed events from database
+        for (const evtId of deletedEventIds) {
+          try {
+            await api.delete(`/cases/${id}/events/${evtId}`);
+          } catch (e) {}
         }
 
         // Upsert Products
@@ -1510,11 +1645,19 @@ export default function CaseDetailPage() {
     const handleCloseCase = () => {
       if (!caseData) return;
       if (isReadOnly) {
-        alert("This case is read-only. You cannot close it.");
+        setNoticeDialog({
+          title: "Argus Safety Web -- Webpage Dialog",
+          message: "This case is read-only. You cannot close it.",
+          icon: "warning"
+        });
         return;
       }
       if (caseData.workflow_state !== 'QC_COMPLETED' && caseData.assigned_to !== user?.user_id) {
-        alert("You cannot close this case. It must be routed for QC.");
+        setNoticeDialog({
+          title: "Argus Safety Web -- Webpage Dialog",
+          message: "You cannot close this case. It must be routed for QC.",
+          icon: "warning"
+        });
         return;
       }
       setShowClosePrompt(true);
@@ -1522,7 +1665,11 @@ export default function CaseDetailPage() {
 
     const handleRouteCase = () => {
       if (isReadOnly) {
-        alert("This case is read-only. You cannot route it.");
+        setNoticeDialog({
+          title: "Argus Safety Web -- Webpage Dialog",
+          message: "This case is read-only. You cannot route it.",
+          icon: "warning"
+        });
         return;
       }
       setShowRoutePrompt(true);
@@ -1534,12 +1681,20 @@ export default function CaseDetailPage() {
     const handleLockCase = async () => {
       try {
         await api.post(`/cases/${id}/lock`);
-        alert("Case locked successfully. Other users can no longer see or edit this case.");
+        setNoticeDialog({
+          title: "Argus Safety Web -- Webpage Dialog",
+          message: "Case locked successfully. Other users can no longer see or edit this case.",
+          icon: "info"
+        });
         setCaseData(p => ({ ...p, locked_by: user?.username }));
         setManualLock(true);
       } catch (err) {
         console.error("Failed to lock case:", err);
-        alert("Failed to lock case.");
+        setNoticeDialog({
+          title: "Argus Safety Web -- Webpage Dialog",
+          message: "Failed to lock case.",
+          icon: "warning"
+        });
       }
     };
 
@@ -1812,7 +1967,9 @@ export default function CaseDetailPage() {
                   genericName: '',
                   obtainCountry: '',
                   formulation: '',
-                  authCountry: ''
+                  authCountry: '',
+                  role: 'Suspect',
+                  datasheets: DEFAULT_DATASHEETS
                 }]);
                 setActiveProductTab(newId);
               }}
@@ -2725,15 +2882,33 @@ export default function CaseDetailPage() {
                         {labTests.map(test => (
                           <div key={test.id} className="space-y-1 pt-1 pb-2 border-b border-gray-200 last:border-b-0">
                             <div className="flex justify-end">
-                              <button type="button" className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Encode</button>
+                              <button 
+                                type="button" 
+                                onClick={() => openIcdBrowser('lab', test.id, (test.reported || test.name || '').trim())}
+                                className="h-[18px] px-2 text-[9px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer"
+                              >
+                                Encode
+                              </button>
                             </div>
                             <div className="flex gap-1 items-center">
                               <input 
                                 className={cn(inp, "flex-1 h-[20px] text-[10px]")} 
                                 value={test.reported || ''} 
                                 onChange={(e) => updateLabTest(test.id, 'reported', e.target.value)} 
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    openIcdBrowser('lab', test.id, (test.reported || test.name || '').trim());
+                                  }
+                                }}
                               />
-                              <button type="button" className="w-[20px] h-[20px] border border-gray-300 bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-[10px]">🔍</button>
+                              <button 
+                                type="button" 
+                                onClick={() => openIcdBrowser('lab', test.id, (test.reported || test.name || '').trim())}
+                                className="w-[20px] h-[20px] border border-gray-300 bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-[10px] cursor-pointer"
+                              >
+                                🔍
+                              </button>
                             </div>
                             <div className="flex gap-1 items-center">
                               <input 
@@ -3348,22 +3523,56 @@ export default function CaseDetailPage() {
                               <div>
                                 <label className={lbl}>Description as Reported</label>
                                 <div className="flex gap-1 relative">
-                                  <input className={inp} value={activeEvent.descriptionReported || ''} onChange={(e) => updateActiveEvent('descriptionReported', e.target.value)} />
+                                  <input 
+                                    className={inp} 
+                                    value={activeEvent.descriptionReported || ''} 
+                                    onChange={(e) => updateActiveEvent('descriptionReported', e.target.value)} 
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        const term = (activeEvent.descriptionReported || '').trim() || (activeEvent.descriptionCoded || '').trim();
+                                        if (!activeEvent.descriptionCoded && activeEvent.descriptionReported) {
+                                          updateActiveEvent('descriptionCoded', activeEvent.descriptionReported);
+                                          updateActiveEvent('name', activeEvent.descriptionReported);
+                                        }
+                                        openIcdBrowser('event', activeEventTab, term);
+                                      }
+                                    }}
+                                  />
                                 </div>
                               </div>
                               <div>
                                 <label className={lbl}>Description to be Coded</label>
                                 <div className="flex gap-1">
-                                  <input className={inp} value={activeEvent.descriptionCoded || ''} onChange={(e) => {
-                                    updateActiveEvent('descriptionCoded', e.target.value);
-                                    updateActiveEvent('name', e.target.value);
-                                  }} onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      openIcdBrowser('event', activeEventTab, activeEvent.descriptionCoded);
-                                    }
-                                  }} />
-                                  <button onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.descriptionCoded)} className="h-[20px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer">Encode</button>
+                                  <input 
+                                    className={inp} 
+                                    value={activeEvent.descriptionCoded || ''} 
+                                    onChange={(e) => {
+                                      updateActiveEvent('descriptionCoded', e.target.value);
+                                      updateActiveEvent('name', e.target.value);
+                                    }} 
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        const term = (activeEvent.descriptionReported || '').trim() || (activeEvent.descriptionCoded || '').trim();
+                                        openIcdBrowser('event', activeEventTab, term);
+                                      }
+                                    }} 
+                                  />
+                                  <button 
+                                    type="button"
+                                    onClick={() => {
+                                      const term = (activeEvent.descriptionReported || '').trim() || (activeEvent.descriptionCoded || '').trim();
+                                      if (!activeEvent.descriptionCoded && activeEvent.descriptionReported) {
+                                        updateActiveEvent('descriptionCoded', activeEvent.descriptionReported);
+                                        updateActiveEvent('name', activeEvent.descriptionReported);
+                                      }
+                                      openIcdBrowser('event', activeEventTab, term);
+                                    }} 
+                                    className="h-[20px] px-2 text-[10px] bg-gray-100 border border-gray-400 hover:bg-gray-200 cursor-pointer"
+                                  >
+                                    Encode
+                                  </button>
                                 </div>
                               </div>
 
@@ -3382,10 +3591,10 @@ export default function CaseDetailPage() {
                                 <input className={cn(inp, "flex-1", activeEvent.entity && "bg-slate-50")} value={activeEvent.entity || ''} onChange={(e) => updateActiveEvent('entity', e.target.value)} onKeyDown={(e) => {
                                   if (e.key === 'Enter') {
                                     e.preventDefault();
-                                    openIcdBrowser('event', activeEventTab, activeEvent.entity);
+                                    openIcdBrowser('event', activeEventTab, activeEvent.entity || activeEvent.descriptionReported || activeEvent.descriptionCoded || '');
                                   }
                                 }} />
-                                <button onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.entity)} className="w-5 h-[20px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] hover:bg-gray-200">🔍</button>
+                                <button type="button" onClick={() => openIcdBrowser('event', activeEventTab, activeEvent.entity || activeEvent.descriptionReported || activeEvent.descriptionCoded || '')} className="w-5 h-[20px] bg-gray-100 border border-gray-400 flex items-center justify-center text-[10px] hover:bg-gray-200">🔍</button>
                               </div>
                               <label className={lbl}>PT code</label>
                               <input className={cn(inp, activeEvent.entityCode && "bg-slate-50")} value={activeEvent.entityCode || ''} onChange={(e) => updateActiveEvent('entityCode', e.target.value)} />
@@ -3521,13 +3730,7 @@ export default function CaseDetailPage() {
                         <select className={cn(sel, "w-full mb-1")}><option>--All--</option></select>
                       </td>
                       <td className="px-1 py-1 border-r border-b border-gray-300"></td>
-                      <td className="px-1 py-1 border-r border-b border-gray-300">
-                        <select className={cn(sel, "w-full mb-1")}>
-                          <option>IB</option>
-                          <option>SMPC</option>
-                          <option>USPI</option>
-                        </select>
-                      </td>
+                      <td className="px-1 py-1 border-r border-b border-gray-300"></td>
                       <td className="px-1 py-1 border-r border-b border-gray-300">
                         <select className={cn(sel, "w-full mb-1")}><option>--Assigned--</option></select>
                       </td>
@@ -3535,7 +3738,7 @@ export default function CaseDetailPage() {
                     </tr>
                     {productTabs.filter(p => p.role === 'Suspect' || p.role === 'Interacting').map(product =>
                       eventTabs.map(event => {
-                        const activeDatasheets = product.datasheets || [{ name: 'IB', licenses: [{ name: 'CA (Inv: CAN235)' }, { name: 'EU (Inv: )' }, { name: 'US (Inv: 48,811)' }] }];
+                        const activeDatasheets = (product.datasheets && product.datasheets.length > 0) ? product.datasheets : DEFAULT_DATASHEETS;
                         return (
                           <tr key={`${product.id}-${event.id}`}>
                             <td className="px-1 py-1 border-r border-gray-300 align-top">
@@ -4176,14 +4379,13 @@ export default function CaseDetailPage() {
                     <div className="flex gap-0.5">
                       <input
                         type="file"
-                        accept=".pdf,.csv"
                         className="hidden"
                         ref={fileInputRef}
                         onChange={handleAttachFile}
                       />
-                      <button onClick={() => fileInputRef.current?.click()} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Attach File</button>
-                      <button onClick={handleAddAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
-                      <button onClick={handleDeleteAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
+                      <button onClick={triggerAttachNew} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Attach File</button>
+                      <button onClick={handleAddAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Add</button>
+                      <button onClick={handleDeleteAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Delete</button>
                       <button
                         type="button"
                         onClick={() => toggleSection('notesAndAttachment')}
@@ -4201,7 +4403,7 @@ export default function CaseDetailPage() {
                           <th className="px-1 py-1 font-bold border-r border-gray-300 w-8">#</th>
                           <th className="px-1 py-1 font-bold border-r border-gray-300 w-1/4">Classification<br />Date / Incl. Reg. Sub</th>
                           <th className="px-1 py-1 font-bold border-r border-gray-300">Keywords<br />Description</th>
-                          <th className="px-1 py-1 font-bold w-24"></th>
+                          <th className="px-1.5 py-1 font-bold w-48 text-right">Document & Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -4213,23 +4415,101 @@ export default function CaseDetailPage() {
                           >
                             <td className="px-1 py-1 border-r border-gray-300 align-top text-red-600 font-bold">{idx + 1}.</td>
                             <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                              <input className={cn(inp, "w-full")} value={att.classification} onChange={(e) => updateAttachment(att.id, 'classification', e.target.value)} />
-                              <input className={cn(inp, "w-24")} value={att.date} onChange={(e) => updateAttachment(att.id, 'date', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={att.classification || ''} onChange={(e) => updateAttachment(att.id, 'classification', e.target.value)} />
+                              <input className={cn(inp, "w-24")} value={att.date || ''} onChange={(e) => updateAttachment(att.id, 'date', e.target.value)} />
                             </td>
                             <td className="px-1 py-1 border-r border-gray-300 align-top space-y-1">
-                              <input className={cn(inp, "w-full")} value={att.keywords} onChange={(e) => updateAttachment(att.id, 'keywords', e.target.value)} />
-                              <input className={cn(inp, "w-full")} value={att.description} onChange={(e) => updateAttachment(att.id, 'description', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={att.keywords || ''} onChange={(e) => updateAttachment(att.id, 'keywords', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={att.description || ''} onChange={(e) => updateAttachment(att.id, 'description', e.target.value)} />
                             </td>
-                            <td className="px-1 py-1 align-top space-y-1 flex flex-col items-end">
-                              <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1"><span className="text-[12px]">🔎</span> Select</button>
-                              {att.filename && <div className="text-[9px] text-gray-500 truncate max-w-[80px]" title={att.filename}>{att.filename}</div>}
-                              <div className="flex items-center gap-0.5 cursor-pointer mt-1 mr-1">
-                                <span className="text-[14px]">🔭</span>
-                                <span className="text-[12px] bg-white px-0.5 border border-gray-300 shadow-sm leading-none h-[14px] flex items-center">📄</span>
+                            <td className="px-1.5 py-1 align-top">
+                              <div className="flex flex-col items-end gap-1">
+                                <div className="flex items-center gap-1">
+                                  <button 
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      triggerAttachForRow(att.id);
+                                    }} 
+                                    className="h-[20px] px-2 text-[10px] font-medium bg-white border border-gray-400 text-slate-800 rounded-[2px] flex items-center gap-1 hover:bg-slate-100 shadow-xs cursor-pointer"
+                                    title="Choose/change file from your computer"
+                                  >
+                                    <span>🔎</span> Select
+                                  </button>
+
+                                  {att.fileData ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPreviewAttachment(att);
+                                      }}
+                                      className="h-[20px] px-2.5 text-[10px] font-bold bg-blue-50 border border-blue-400 text-blue-700 hover:bg-blue-100 rounded-[2px] flex items-center gap-1 shadow-xs cursor-pointer"
+                                      title="Click to view/preview document"
+                                    >
+                                      <span>👁️</span> View
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        triggerAttachForRow(att.id);
+                                      }}
+                                      className="h-[20px] px-2.5 text-[10px] font-bold bg-amber-50 border border-amber-400 text-amber-700 hover:bg-amber-100 rounded-[2px] flex items-center gap-1 shadow-xs cursor-pointer"
+                                      title="Upload document file for this entry"
+                                    >
+                                      <span>📎</span> Upload
+                                    </button>
+                                  )}
+                                </div>
+
+                                {att.filename && (
+                                  <div 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPreviewAttachment(att);
+                                    }}
+                                    className="text-[10px] text-brand-primary underline hover:text-blue-800 truncate max-w-[170px] cursor-pointer font-medium text-right flex items-center gap-0.5 justify-end" 
+                                    title={`Click to view: ${att.filename}`}
+                                  >
+                                    <span>📄</span>
+                                    <span className="truncate">{att.filename}</span>
+                                  </div>
+                                )}
+
+                                {att.fileData && (
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <a
+                                      href={att.fileData}
+                                      download={att.filename || 'attachment'}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-[9px] text-slate-500 hover:text-emerald-700 flex items-center gap-0.5 underline cursor-pointer font-medium"
+                                      title="Direct Download"
+                                    >
+                                      <span>📥</span> Download
+                                    </a>
+                                    <span
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPreviewAttachment(att);
+                                      }}
+                                      className="text-[12px] cursor-pointer hover:scale-110 transition-transform"
+                                      title="View preview"
+                                    >
+                                      🔭
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>
                         ))}
+                        {attachments.length === 0 && (
+                          <tr>
+                            <td colSpan="4" className="px-4 py-6 text-center text-slate-400 italic">No notes or attachments added</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   )}
@@ -4275,11 +4555,11 @@ export default function CaseDetailPage() {
                           >
                             <td className="px-1 py-1 border-r border-gray-300 align-top text-red-600 font-bold">{idx + 1}.</td>
                             <td className="px-1 py-1 border-r border-gray-300 align-top">
-                              <input className={cn(inp, "w-full")} value={ref.type} onChange={(e) => updateReference(ref.id, 'type', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={ref.type || ''} onChange={(e) => updateReference(ref.id, 'type', e.target.value)} />
                             </td>
                             <td className="px-1 py-1 border-r border-gray-300 align-top">
                               <div className="flex items-center gap-1">
-                                <input className={cn(inp, "w-full")} value={ref.refId} onChange={(e) => updateReference(ref.id, 'refId', e.target.value)} />
+                                <input className={cn(inp, "w-full")} value={ref.refId || ''} onChange={(e) => updateReference(ref.id, 'refId', e.target.value)} />
                                 <span
                                   className="text-[14px] cursor-pointer"
                                   onClick={() => handleLinkCase(ref.refId)}
@@ -4288,10 +4568,15 @@ export default function CaseDetailPage() {
                               </div>
                             </td>
                             <td className="px-1 py-1 align-top">
-                              <input className={cn(inp, "w-full")} value={ref.notes} onChange={(e) => updateReference(ref.id, 'notes', e.target.value)} />
+                              <input className={cn(inp, "w-full")} value={ref.notes || ''} onChange={(e) => updateReference(ref.id, 'notes', e.target.value)} />
                             </td>
                           </tr>
                         ))}
+                        {references.length === 0 && (
+                          <tr>
+                            <td colSpan="4" className="px-4 py-6 text-center text-slate-400 italic">No references added</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   )}
@@ -4688,6 +4973,46 @@ export default function CaseDetailPage() {
           </div>
         )}
 
+        {/* Webpage Dialog Modal (Notice / Alert replacement) */}
+        {noticeDialog && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/20 backdrop-blur-[0.5px]">
+            <div className="bg-white w-[380px] border-[2px] border-slate-300 rounded-t-[4px] shadow-2xl flex flex-col font-tahoma overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+              <div className="bg-gradient-to-b from-brand-primary to-brand-primary/80 px-2 py-1 flex justify-between items-center select-none">
+                <span className="text-white font-bold text-[11px] tracking-wide">
+                  {noticeDialog.title || "Argus Safety Web -- Webpage Dialog"}
+                </span>
+                <button
+                  onClick={() => setNoticeDialog(null)}
+                  className="bg-emerald-500 border border-white text-white rounded-[2px] w-[18px] h-[18px] flex items-center justify-center hover:bg-emerald-400 leading-none text-[12px] font-bold cursor-pointer"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="bg-white border-b border-gray-400 p-5 flex items-center gap-4">
+                <div className="text-[30px] leading-none shrink-0 select-none">
+                  {noticeDialog.icon === 'info' ? 'ℹ️' : '⚠️'}
+                </div>
+                <div className="text-[12px] text-gray-800 leading-normal font-sans">
+                  {noticeDialog.message}
+                </div>
+              </div>
+              <div className="bg-slate-50 px-4 py-2 flex justify-center border-b border-gray-400">
+                <button
+                  autoFocus
+                  onClick={() => setNoticeDialog(null)}
+                  className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-100 shadow-sm cursor-pointer active:bg-slate-200 font-sans"
+                >
+                  OK
+                </button>
+              </div>
+              <div className="bg-slate-50 px-2 py-0.5 text-[9px] text-gray-600 flex items-center gap-1">
+                <span className="text-[10px]">🌐</span> Internet
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Route Prompt Modal */}
         {showRoutePrompt && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center bg-transparent">
@@ -4716,7 +5041,14 @@ export default function CaseDetailPage() {
               </div>
               <div className="bg-slate-50 px-4 py-2 flex justify-center gap-2 border-b border-gray-400">
                 <button onClick={() => {
-                  if (!selectedAssignee) return alert("Please select a user to route to.");
+                  if (!selectedAssignee) {
+                    setNoticeDialog({
+                      title: "Argus Safety Web -- Webpage Dialog",
+                      message: "Please select a user to route to.",
+                      icon: "warning"
+                    });
+                    return;
+                  }
                   api.post(`/cases/${id}/route`, { assigned_to: selectedAssignee, comments: routeComments })
                     .then(() => {
                       setShowRoutePrompt(false);
@@ -4724,7 +5056,11 @@ export default function CaseDetailPage() {
                     })
                     .catch(err => {
                       console.error("Routing error:", err);
-                      alert("Failed to route case");
+                      setNoticeDialog({
+                        title: "Argus Safety Web -- Webpage Dialog",
+                        message: "Failed to route case",
+                        icon: "warning"
+                      });
                     });
                 }} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Route</button>
                 <button onClick={() => setShowRoutePrompt(false)} className="w-20 py-0.5 text-[11px] bg-white border border-gray-400 text-gray-800 hover:bg-slate-50 shadow-sm">Cancel</button>
@@ -5061,6 +5397,149 @@ export default function CaseDetailPage() {
         onSelect={handleIcdSelect}
         initialSearchTerm={icdSearchTerm}
       />
+
+      {/* Document Preview Modal (Supports all formats: Images, PDF, Text, CSV, Office docs, etc.) */}
+      {previewAttachment && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4">
+          <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-lg shadow-2xl border border-slate-300 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
+            {/* Modal Header */}
+            <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
+              <div className="flex items-center gap-2 overflow-hidden pr-2">
+                <span className="text-xl">📄</span>
+                <div className="truncate">
+                  <div className="font-semibold text-sm truncate">{previewAttachment.filename || 'Document'}</div>
+                  <div className="text-[11px] text-slate-300 flex items-center gap-2">
+                    {previewAttachment.fileSize ? <span>{(previewAttachment.fileSize / 1024).toFixed(1)} KB</span> : null}
+                    {previewAttachment.fileType ? <span>• {previewAttachment.fileType}</span> : null}
+                    {previewAttachment.classification ? <span>• {previewAttachment.classification}</span> : null}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {previewAttachment.fileData && (
+                  <a
+                    href={previewAttachment.fileData}
+                    download={previewAttachment.filename || 'download'}
+                    className="px-3 py-1 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <span>📥</span> Download
+                  </a>
+                )}
+                <button
+                  onClick={() => {
+                    triggerAttachForRow(previewAttachment.id);
+                    setPreviewAttachment(null);
+                  }}
+                  className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Replace or upload a new file for this document"
+                >
+                  <span>🔄</span> Replace File
+                </button>
+                <button
+                  onClick={() => setPreviewAttachment(null)}
+                  className="w-7 h-7 flex items-center justify-center rounded-full bg-slate-700 hover:bg-slate-600 text-slate-200 hover:text-white transition-colors text-base leading-none cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 overflow-auto flex-1 bg-slate-100 flex items-center justify-center min-h-[350px]">
+              {previewAttachment.fileData ? (
+                <div className="w-full flex items-center justify-center">
+                  {/* Image formats */}
+                  {(previewAttachment.fileType?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(previewAttachment.filename || '')) && (
+                    <div className="flex items-center justify-center p-2 bg-white rounded shadow-sm border border-slate-200 max-h-[70vh] overflow-auto">
+                      <img
+                        src={previewAttachment.fileData}
+                        alt={previewAttachment.filename}
+                        className="max-w-full max-h-[65vh] object-contain rounded"
+                      />
+                    </div>
+                  )}
+
+                  {/* PDF format */}
+                  {(previewAttachment.fileType?.includes('pdf') || /\.pdf$/i.test(previewAttachment.filename || '')) && (
+                    <iframe
+                      src={previewAttachment.fileData}
+                      title={previewAttachment.filename}
+                      className="w-full h-[70vh] rounded border border-slate-300 bg-white shadow-sm"
+                    />
+                  )}
+
+                  {/* Text / CSV / JSON / Log format */}
+                  {!(previewAttachment.fileType?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(previewAttachment.filename || '')) &&
+                   !(previewAttachment.fileType?.includes('pdf') || /\.pdf$/i.test(previewAttachment.filename || '')) &&
+                   (previewAttachment.fileType?.startsWith('text/') || /\.(txt|csv|tsv|json|xml|log|md|html)$/i.test(previewAttachment.filename || '')) && (
+                    <iframe
+                      src={previewAttachment.fileData}
+                      title={previewAttachment.filename}
+                      className="w-full h-[70vh] rounded border border-slate-300 bg-white shadow-sm font-mono text-xs"
+                    />
+                  )}
+
+                  {/* Word / Excel / Office / Other Binary formats */}
+                  {!(previewAttachment.fileType?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(previewAttachment.filename || '')) &&
+                   !(previewAttachment.fileType?.includes('pdf') || /\.pdf$/i.test(previewAttachment.filename || '')) &&
+                   !(previewAttachment.fileType?.startsWith('text/') || /\.(txt|csv|tsv|json|xml|log|md|html)$/i.test(previewAttachment.filename || '')) && (
+                    <div className="bg-white border border-slate-200 rounded-lg p-8 shadow-sm flex flex-col items-center text-center max-w-md w-full">
+                      <div className="w-16 h-16 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-3xl mb-4 shadow-xs">
+                        {/\.(xlsx?|csv)$/i.test(previewAttachment.filename || '') ? '📊' : /\.(docx?|rtf)$/i.test(previewAttachment.filename || '') ? '📝' : '📦'}
+                      </div>
+                      <h4 className="font-bold text-slate-800 text-base break-all">{previewAttachment.filename}</h4>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {previewAttachment.fileSize ? `${(previewAttachment.fileSize / 1024).toFixed(1)} KB` : 'Attached file'} • {previewAttachment.fileType || 'Document'}
+                      </p>
+                      <div className="w-full bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-600 mt-4 leading-relaxed">
+                        This file format ({previewAttachment.filename?.split('.').pop()?.toUpperCase() || 'DOCUMENT'}) is stored securely. Click below to download and open it in your local application.
+                      </div>
+                      <a
+                        href={previewAttachment.fileData}
+                        download={previewAttachment.filename || 'download'}
+                        className="mt-6 w-full py-2.5 px-4 bg-brand-primary hover:bg-brand-primary/90 text-white font-medium text-xs rounded-md shadow flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <span>📥 Download & Open File</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-white border border-amber-200 rounded-lg p-8 shadow-sm flex flex-col items-center text-center max-w-md w-full">
+                  <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center text-3xl mb-4 shadow-xs">
+                    📎
+                  </div>
+                  <h4 className="font-bold text-slate-800 text-base break-all">{previewAttachment.filename || 'Attachment Entry'}</h4>
+                  <p className="text-xs text-slate-500 mt-1">Classification: {previewAttachment.classification || 'Attachment'}</p>
+                  <div className="w-full bg-amber-50/70 border border-amber-200/80 rounded p-3 text-xs text-amber-800 mt-4 leading-relaxed">
+                    The entry details are recorded, but the actual file content has not been uploaded yet. Click below to select the file from your computer and attach it now (all file formats supported).
+                  </div>
+                  <button
+                    onClick={() => {
+                      triggerAttachForRow(previewAttachment.id);
+                      setPreviewAttachment(null);
+                    }}
+                    className="mt-6 w-full py-2.5 px-4 bg-brand-primary hover:bg-brand-primary/90 text-white font-medium text-xs rounded-md shadow flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <span>📁 Select & Upload File Now</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-white px-4 py-2.5 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500">
+              <div>Description: {previewAttachment.description || 'Uploaded File'}</div>
+              <button
+                onClick={() => setPreviewAttachment(null)}
+                className="px-4 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded border border-slate-300 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <datalist id="all-countries-list">
         {COUNTRIES.map(c => (

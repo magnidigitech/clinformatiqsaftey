@@ -84,22 +84,37 @@ export default function NewCasePage() {
   const handleAttachFile = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const newAttachment = {
-        id: Date.now(),
-        classification: 'Attachment',
-        date: new Date().toLocaleDateString('en-GB').replace(/\//g, '-').toUpperCase(),
-        keywords: file.name,
-        description: 'Uploaded File',
-        filename: file.name
+      const id = Date.now();
+      const dateStr = new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric'
+      }).format(new Date()).toUpperCase().replace(/ /g, '-');
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const newAttachment = {
+          id,
+          classification: 'Attachment',
+          date: dateStr,
+          keywords: file.name,
+          description: 'Uploaded File',
+          filename: file.name,
+          fileSize: file.size,
+          fileType: file.type || 'application/octet-stream',
+          fileData: reader.result
+        };
+        setAttachments(prev => [...prev, newAttachment]);
+        setSelectedAttachmentId(id);
       };
-      setAttachments(prev => [...prev, newAttachment]);
-      setSelectedAttachmentId(newAttachment.id);
+      reader.readAsDataURL(file);
     }
     if (e.target) e.target.value = '';
   };
 
   const handleAddAttachment = () => {
-    const newAttachment = { id: Date.now(), classification: '', date: '00-MMM-0000', keywords: '', description: '', filename: '' };
+    const dateStr = new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric'
+    }).format(new Date()).toUpperCase().replace(/ /g, '-');
+    const newAttachment = { id: Date.now(), classification: 'Attachment', date: dateStr, keywords: '', description: '', filename: '' };
     setAttachments(prev => [...prev, newAttachment]);
     setSelectedAttachmentId(newAttachment.id);
   };

@@ -91,12 +91,32 @@ async function create(req, res, next) {
       patient,
       reporter,
       product,
-      initial_justification
+      initial_justification,
+      attachments,
+      references
     } = req.body;
 
     const case_number = await generateCaseNumber(user.org_id);
 
     const newCase = await prisma.$transaction(async (tx) => {
+      // Prepare initial analysis_data containing attachments and references
+      let initialAnalysis = {};
+      if (req.body.analysis_data) {
+        try {
+          initialAnalysis = typeof req.body.analysis_data === 'string' 
+            ? JSON.parse(req.body.analysis_data) 
+            : req.body.analysis_data;
+        } catch (e) {
+          initialAnalysis = {};
+        }
+      }
+      if (attachments && Array.isArray(attachments)) {
+        initialAnalysis.attachments = attachments;
+      }
+      if (references && Array.isArray(references)) {
+        initialAnalysis.references = references;
+      }
+
       // 1. Create the case
       const createdCase = await tx.sptOrgCase.create({
         data: {
@@ -110,7 +130,7 @@ async function create(req, res, next) {
           case_type: case_type || null,
           serious_flag: serious_flag || 'N',
           case_narrative: req.body.case_narrative || null,
-          analysis_data: req.body.analysis_data ? (typeof req.body.analysis_data === 'object' ? JSON.stringify(req.body.analysis_data) : String(req.body.analysis_data)) : null,
+          analysis_data: Object.keys(initialAnalysis).length > 0 ? JSON.stringify(initialAnalysis) : null,
         },
       });
 
@@ -230,9 +250,18 @@ async function getById(req, res, next) {
       throw err;
     }
 
+    let parsedAnalysis = {};
+    if (caseData.analysis_data) {
+      try {
+        parsedAnalysis = typeof caseData.analysis_data === 'string' ? JSON.parse(caseData.analysis_data) : caseData.analysis_data;
+      } catch (e) {}
+    }
+
     const caseResult = {
       ...caseData,
       case_country: caseData.case_country || caseData.reporters?.[0]?.country || null,
+      attachments: parsedAnalysis.attachments || [],
+      references: parsedAnalysis.references || [],
     };
 
     res.json({ success: true, data: caseResult });
@@ -262,7 +291,21 @@ async function getByNumber(req, res, next) {
       throw err;
     }
 
-    res.json({ success: true, data: caseData });
+    let parsedAnalysis = {};
+    if (caseData.analysis_data) {
+      try {
+        parsedAnalysis = typeof caseData.analysis_data === 'string' ? JSON.parse(caseData.analysis_data) : caseData.analysis_data;
+      } catch (e) {}
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...caseData,
+        attachments: parsedAnalysis.attachments || [],
+        references: parsedAnalysis.references || [],
+      }
+    });
   } catch (err) {
     next(err);
   }
@@ -279,7 +322,7 @@ async function update(req, res, next) {
     assertEditable(caseRecord, req.user);
 
     // Only the case owner (student) can update
-    const { receipt_date, aware_date, case_type, case_country, serious_flag, workflow_state, assigned_to, case_narrative, analysis_data, patient_history_data, lab_data } = req.body;
+    const { receipt_date, aware_date, case_type, case_country, serious_flag, workflow_state, assigned_to, case_narrative, analysis_data, patient_history_data, lab_data, attachments, references } = req.body;
 
     // Only the case owner (student) or current assignee can update unless it's a routing update
     if (req.user.role === 'STUDENT' && caseRecord.student_id !== req.user.user_id && caseRecord.assigned_to !== req.user.user_id && !workflow_state && !assigned_to) {
@@ -324,6 +367,29 @@ async function update(req, res, next) {
       return String(val);
     };
 
+    let finalAnalysisData = undefined;
+    if (analysis_data !== undefined || attachments !== undefined || references !== undefined) {
+      let currentObj = {};
+      if (caseRecord.analysis_data) {
+        try {
+          currentObj = typeof caseRecord.analysis_data === 'string' ? JSON.parse(caseRecord.analysis_data) : caseRecord.analysis_data;
+        } catch (e) {}
+      }
+      if (analysis_data !== undefined) {
+        try {
+          const parsed = typeof analysis_data === 'string' ? JSON.parse(analysis_data) : analysis_data;
+          currentObj = { ...currentObj, ...parsed };
+        } catch (e) {}
+      }
+      if (attachments !== undefined) {
+        currentObj.attachments = attachments;
+      }
+      if (references !== undefined) {
+        currentObj.references = references;
+      }
+      finalAnalysisData = JSON.stringify(currentObj);
+    }
+
     const updatedCase = await prisma.sptOrgCase.update({
       where: { case_id: caseId },
       data: {
@@ -333,7 +399,7 @@ async function update(req, res, next) {
         case_country: case_country !== undefined ? case_country : undefined,
         serious_flag: serious_flag !== undefined ? serious_flag : undefined,
         case_narrative: case_narrative !== undefined ? case_narrative : undefined,
-        analysis_data: analysis_data !== undefined ? (typeof analysis_data === 'object' ? JSON.stringify(analysis_data) : String(analysis_data)) : undefined,
+        analysis_data: finalAnalysisData !== undefined ? finalAnalysisData : undefined,
         patient_history_data: serializeVal(patient_history_data),
         lab_data: serializeVal(lab_data),
         workflow_state: workflow_state !== undefined ? workflow_state : undefined,

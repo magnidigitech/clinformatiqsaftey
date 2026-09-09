@@ -55,7 +55,7 @@ export default function IcdBrowserModal({ isOpen, onClose, onSelect, initialSear
         {/* Modal Header */}
         <div className="bg-brand-primary text-white px-2 py-1 flex justify-between items-center cursor-default">
           <div className="flex items-center gap-1">
-            <span className="font-bold tracking-wide">ICD-11 Browser</span>
+            <span className="font-bold tracking-wide">MedDRA / ICD-11 Browser</span>
           </div>
           <button onClick={onClose} className="bg-white text-black w-[14px] h-[14px] flex items-center justify-center border border-slate-200 rounded-sm font-bold text-[9px] leading-none active:bg-slate-100">x</button>
         </div>
