@@ -21,7 +21,7 @@ export default function AdminLoginPage() {
     setIsLoading(true);
     
     try {
-      await loginAdmin(username, password);
+      await loginAdmin(username.trim().toLowerCase(), password);
       // loginAdmin redirects to /admin on success
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed');

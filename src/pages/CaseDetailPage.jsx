@@ -132,18 +132,91 @@ export default function CaseDetailPage() {
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
 
   // Tabs state
-  const [activeTab, setActiveTab] = useState('Patient');
-  const [activeSubTab, setActiveSubTab] = useState('Patient');
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabFromUrl = urlParams.get('tab');
+      if (tabFromUrl) return tabFromUrl;
+      const pathParts = window.location.pathname.split('/');
+      const caseIdFromPath = pathParts[pathParts.length - 1];
+      const savedTab = sessionStorage.getItem(`case_${caseIdFromPath}_activeTab`);
+      if (savedTab) return savedTab;
+    } catch (e) {}
+    return 'Patient';
+  });
+
+  const [activeSubTab, setActiveSubTab] = useState(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const subTabFromUrl = urlParams.get('subTab');
+      if (subTabFromUrl) return subTabFromUrl;
+      const pathParts = window.location.pathname.split('/');
+      const caseIdFromPath = pathParts[pathParts.length - 1];
+      const savedSubTab = sessionStorage.getItem(`case_${caseIdFromPath}_activeSubTab`);
+      if (savedSubTab) return savedSubTab;
+    } catch (e) {}
+    return 'Patient';
+  });
+
+  useEffect(() => {
+    if (id && activeTab) {
+      try { sessionStorage.setItem(`case_${id}_activeTab`, activeTab); } catch (e) {}
+    }
+  }, [id, activeTab]);
+
+  useEffect(() => {
+    if (id && activeSubTab) {
+      try { sessionStorage.setItem(`case_${id}_activeSubTab`, activeSubTab); } catch (e) {}
+    }
+  }, [id, activeSubTab]);
+
   const [productTabs, setProductTabs] = useState([
     {
       id: 1,
       name: '',
       isDR: false,
       genericName: '',
+      companyDrugCode: '',
       obtainCountry: '',
+      ndc: '',
+      whoId: '',
       formulation: '',
+      route: '',
       authCountry: '',
+      labeler: '',
+      concentration: '',
+      units: '',
+      interaction: '',
+      contraindicated: '',
       role: 'Suspect',
+      firstDose: '',
+      lastDose: '',
+      durationOfAdmin: '',
+      totalDosage: '',
+      totalDosageUnits: '',
+      timeFirstDosePrimaryEvent: '',
+      timeLastDosePrimaryEvent: '',
+      totalDosePrimaryEvent: '',
+      totalDosePrimaryEventUnits: '',
+      actionTaken: '',
+      dechallengeResults: '',
+      dechallengeDate: '',
+      takenPreviously: '',
+      rechallengeResults: '',
+      rechallengeStartDate: '',
+      rechallengeStopDate: '',
+      abuse: false,
+      overdose: false,
+      tampering: false,
+      productIndications: [],
+      dosageTabs: [{
+        id: 1,
+        name: 'New Regimen',
+        startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
+        doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
+        dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
+        patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
+      }],
       datasheets: DEFAULT_DATASHEETS
     }
   ]);
@@ -170,34 +243,6 @@ export default function CaseDetailPage() {
 
   const [deletedProductIds, setDeletedProductIds] = useState([]);
   const [deletedEventIds, setDeletedEventIds] = useState([]);
-
-  const handleDeleteProductTab = async (idToDelete) => {
-    const target = productTabs.find(t => t.id === idToDelete);
-    const backendId = target?.backendId || (typeof idToDelete === 'number' && idToDelete < 1000000000000 ? idToDelete : null);
-
-    if (backendId) {
-      setDeletedProductIds(prev => [...prev, backendId]);
-      if (id) {
-        try {
-          await api.delete(`/cases/${id}/products/${backendId}`);
-        } catch (err) {
-          console.warn("Failed to delete product immediately from database:", err);
-        }
-      }
-    }
-
-    setProductTabs(prev => {
-      const newTabs = prev.filter(t => t.id !== idToDelete);
-      if (activeProductTab === idToDelete && newTabs.length > 0) {
-        setActiveProductTab(newTabs[0].id);
-      } else if (newTabs.length === 0) {
-        setActiveProductTab(null);
-      }
-      return newTabs;
-    });
-
-    setEventAssessments(prev => prev.filter(a => a.productId !== idToDelete && a.productId !== backendId));
-  };
 
   const [eventTabs, setEventTabs] = useState([
     {
@@ -828,18 +873,116 @@ export default function CaseDetailPage() {
       }
 
       // Hydrate Products
-      if (data.products && data.products.length > 0) {
-        setProductTabs(data.products.map(prod => ({
-          id: prod.product_id,
-          backendId: prod.product_id,
-          name: prod.drug_name || '',
-          genericName: '',
-          role: 'Suspect',
-          action: 'Unknown',
-          indications: prod.indication ? [{ id: 1, reported: prod.indication, coded: '' }] : [],
-          datasheets: DEFAULT_DATASHEETS
-        })));
-        setActiveProductTab(data.products[0].product_id);
+      let loadedProductTabs = [];
+      if (parsedAnalysis.productsData && Array.isArray(parsedAnalysis.productsData) && parsedAnalysis.productsData.length > 0) {
+        loadedProductTabs = parsedAnalysis.productsData.map((prod, idx) => {
+          const matchingBackend = data.products?.find(p => p.product_id === prod.backendId) || data.products?.[idx];
+          return {
+            ...prod,
+            backendId: matchingBackend ? matchingBackend.product_id : (prod.backendId || null)
+          };
+        });
+      } else if (data.products && data.products.length > 0) {
+        loadedProductTabs = data.products.map(prod => {
+          let role = 'Suspect';
+          if (prod.suspect_flag === 'CONCOMITANT') role = 'Concomitant';
+          else if (prod.suspect_flag === 'TREATMENT') role = 'Treatment';
+
+          return {
+            id: prod.product_id,
+            backendId: prod.product_id,
+            name: prod.drug_name || '',
+            genericName: '',
+            companyDrugCode: '',
+            obtainCountry: '',
+            ndc: '',
+            whoId: '',
+            formulation: '',
+            route: prod.route || '',
+            authCountry: '',
+            labeler: '',
+            concentration: prod.dose || '',
+            units: prod.dose_unit || '',
+            interaction: '',
+            contraindicated: '',
+            role,
+            firstDose: '',
+            lastDose: '',
+            durationOfAdmin: '',
+            totalDosage: '',
+            totalDosageUnits: '',
+            timeFirstDosePrimaryEvent: '',
+            timeLastDosePrimaryEvent: '',
+            totalDosePrimaryEvent: '',
+            totalDosePrimaryEventUnits: '',
+            actionTaken: prod.action_taken || '',
+            dechallengeResults: prod.dechallenge || '',
+            dechallengeDate: '',
+            takenPreviously: '',
+            rechallengeResults: prod.rechallenge || '',
+            rechallengeStartDate: '',
+            rechallengeStopDate: '',
+            abuse: false,
+            overdose: false,
+            tampering: false,
+            productIndications: prod.indication ? [{ id: 1, reported: prod.indication, coded: '' }] : [],
+            dosageTabs: [{
+              id: 1,
+              name: 'New Regimen',
+              startDate: prod.start_date ? new Date(prod.start_date).toISOString().slice(0, 16) : '',
+              stopDate: prod.stop_date ? new Date(prod.stop_date).toISOString().slice(0, 16) : '',
+              ongoing: !prod.stop_date,
+              outsideRange: false,
+              duration: '',
+              doseNumber: '1',
+              dose: prod.dose || '',
+              doseUnits: prod.dose_unit || '',
+              frequency: prod.frequency || '',
+              doseDescription: '',
+              dailyDosage: '',
+              dailyDosageUnits: '',
+              regimenDosage: '',
+              regimenDosageUnits: '',
+              patientRoute: prod.route || '',
+              parentRoute: '',
+              accidentalExposure: '',
+              packageId: '',
+              batchLot: prod.batch_number || '',
+              expirationDate: ''
+            }],
+            datasheets: DEFAULT_DATASHEETS
+          };
+        });
+      }
+
+      if (loadedProductTabs.length > 0) {
+        setProductTabs(loadedProductTabs);
+        const activeId = (parsedAnalysis.activeProductTabId && loadedProductTabs.some(p => p.id === parsedAnalysis.activeProductTabId))
+          ? parsedAnalysis.activeProductTabId
+          : loadedProductTabs[0].id;
+        setActiveProductTab(activeId);
+
+        const currentActive = loadedProductTabs.find(p => p.id === activeId) || loadedProductTabs[0];
+        const activeInds = currentActive.productIndications || currentActive.indications || [];
+        setProductIndications(activeInds);
+        if (activeInds.length > 0) {
+          setActiveIndicationId(activeInds[0].id);
+        } else {
+          setActiveIndicationId(null);
+        }
+
+        const activeDosages = (currentActive.dosageTabs && currentActive.dosageTabs.length > 0)
+          ? currentActive.dosageTabs
+          : [{
+              id: 1,
+              name: 'New Regimen',
+              startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
+              doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
+              dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
+              patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
+            }];
+        setDosageTabs(activeDosages);
+        setActiveDosageTab(currentActive.activeDosageTab || activeDosages[0].id);
       }
 
       // Hydrate Events
@@ -1242,8 +1385,12 @@ export default function CaseDetailPage() {
 
   const activeRegimen = dosageTabs.find(t => t.id === activeDosageTab) || dosageTabs[0];
 
-  const updateDosageTab = (id, field, value) => {
-    setDosageTabs(p => p.map(t => t.id === id ? { ...t, [field]: value } : t));
+  const updateDosageTab = (regId, field, value) => {
+    setDosageTabs(p => {
+      const next = p.map(t => t.id === regId ? { ...t, [field]: value } : t);
+      setProductTabs(tabs => tabs.map(tab => tab.id === activeProductTab ? { ...tab, dosageTabs: next } : tab));
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -1269,16 +1416,192 @@ export default function CaseDetailPage() {
   const indicationsScrollRef = useRef(null);
 
   const handleAddProductIndication = () => {
-    setProductIndications(p => [...p, { id: Date.now(), reported: '', coded: '' }]);
+    const newInd = { id: Date.now(), reported: '', coded: '' };
+    setProductIndications(p => {
+      const next = [...p, newInd];
+      setProductTabs(tabs => tabs.map(tab => tab.id === activeProductTab ? { ...tab, productIndications: next } : tab));
+      return next;
+    });
+    setActiveIndicationId(newInd.id);
   };
 
   const handleDeleteProductIndication = () => {
-    if (activeIndicationId) {
-      setProductIndications(p => p.filter(ind => ind.id !== activeIndicationId));
-      setActiveIndicationId(null);
-    } else if (productIndications.length > 0) {
-      setProductIndications(p => p.slice(0, -1));
+    setProductIndications(p => {
+      let next = p;
+      if (activeIndicationId) {
+        next = p.filter(ind => ind.id !== activeIndicationId);
+        setActiveIndicationId(null);
+      } else if (p.length > 0) {
+        next = p.slice(0, -1);
+      }
+      setProductTabs(tabs => tabs.map(tab => tab.id === activeProductTab ? { ...tab, productIndications: next } : tab));
+      return next;
+    });
+  };
+
+  const switchProductTab = (nextTabId) => {
+    if (nextTabId === activeProductTab) return;
+
+    setProductTabs(prevTabs => {
+      const updated = prevTabs.map(tab => {
+        if (tab.id === activeProductTab) {
+          return {
+            ...tab,
+            productIndications: productIndications,
+            dosageTabs: dosageTabs,
+            activeDosageTab: activeDosageTab
+          };
+        }
+        return tab;
+      });
+
+      const nextTab = updated.find(t => t.id === nextTabId);
+      if (nextTab) {
+        const nextInds = nextTab.productIndications || nextTab.indications || [];
+        setProductIndications(nextInds);
+        if (nextInds.length > 0) setActiveIndicationId(nextInds[0].id);
+        else setActiveIndicationId(null);
+
+        const nextDosages = (nextTab.dosageTabs && nextTab.dosageTabs.length > 0)
+          ? nextTab.dosageTabs
+          : [{
+              id: 1,
+              name: 'New Regimen',
+              startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
+              doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
+              dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
+              patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
+            }];
+        setDosageTabs(nextDosages);
+        setActiveDosageTab(nextTab.activeDosageTab || nextDosages[0].id);
+      }
+      return updated;
+    });
+
+    setActiveProductTab(nextTabId);
+  };
+
+  const handleAddNewProductTab = () => {
+    const newId = Date.now();
+    const newProduct = {
+      id: newId,
+      name: 'New Product',
+      isDR: false,
+      genericName: '',
+      companyDrugCode: '',
+      obtainCountry: '',
+      ndc: '',
+      whoId: '',
+      formulation: '',
+      route: '',
+      authCountry: '',
+      labeler: '',
+      concentration: '',
+      units: '',
+      interaction: '',
+      contraindicated: '',
+      role: 'Suspect',
+      firstDose: '',
+      lastDose: '',
+      durationOfAdmin: '',
+      totalDosage: '',
+      totalDosageUnits: '',
+      timeFirstDosePrimaryEvent: '',
+      timeLastDosePrimaryEvent: '',
+      totalDosePrimaryEvent: '',
+      totalDosePrimaryEventUnits: '',
+      actionTaken: '',
+      dechallengeResults: '',
+      dechallengeDate: '',
+      takenPreviously: '',
+      rechallengeResults: '',
+      rechallengeStartDate: '',
+      rechallengeStopDate: '',
+      abuse: false,
+      overdose: false,
+      tampering: false,
+      productIndications: [],
+      dosageTabs: [{
+        id: 1,
+        name: 'New Regimen',
+        startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
+        doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
+        dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
+        patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
+      }],
+      datasheets: DEFAULT_DATASHEETS
+    };
+
+    setProductTabs(prevTabs => {
+      const updated = prevTabs.map(tab => {
+        if (tab.id === activeProductTab) {
+          return {
+            ...tab,
+            productIndications: productIndications,
+            dosageTabs: dosageTabs,
+            activeDosageTab: activeDosageTab
+          };
+        }
+        return tab;
+      });
+      return [...updated, newProduct];
+    });
+
+    setActiveProductTab(newId);
+    setProductIndications([]);
+    setActiveIndicationId(null);
+    setDosageTabs(newProduct.dosageTabs);
+    setActiveDosageTab(1);
+  };
+
+  const handleDeleteProductTab = async (idToDelete) => {
+    const target = productTabs.find(t => t.id === idToDelete);
+    const backendId = target?.backendId || (typeof idToDelete === 'number' && idToDelete < 1000000000000 ? idToDelete : null);
+
+    if (backendId) {
+      setDeletedProductIds(prev => [...prev, backendId]);
+      if (id) {
+        try {
+          await api.delete(`/cases/${id}/products/${backendId}`);
+        } catch (err) {
+          console.warn("Failed to delete product immediately from database:", err);
+        }
+      }
     }
+
+    const remainingTabs = productTabs.filter(t => t.id !== idToDelete);
+    setProductTabs(remainingTabs);
+
+    if (activeProductTab === idToDelete) {
+      if (remainingTabs.length > 0) {
+        const nextTab = remainingTabs[0];
+        setActiveProductTab(nextTab.id);
+        const nextInds = nextTab.productIndications || nextTab.indications || [];
+        setProductIndications(nextInds);
+        if (nextInds.length > 0) setActiveIndicationId(nextInds[0].id);
+        else setActiveIndicationId(null);
+
+        const nextDosages = (nextTab.dosageTabs && nextTab.dosageTabs.length > 0)
+          ? nextTab.dosageTabs
+          : [{
+              id: 1,
+              name: 'New Regimen',
+              startDate: '', stopDate: '', ongoing: false, outsideRange: false, duration: '',
+              doseNumber: '', dose: '', doseUnits: '', frequency: '', doseDescription: '',
+              dailyDosage: '', dailyDosageUnits: '', regimenDosage: '', regimenDosageUnits: '',
+              patientRoute: '', parentRoute: '', accidentalExposure: '', packageId: '', batchLot: '', expirationDate: ''
+            }];
+        setDosageTabs(nextDosages);
+        setActiveDosageTab(nextTab.activeDosageTab || nextDosages[0].id);
+      } else {
+        setActiveProductTab(null);
+        setProductIndications([]);
+        setActiveIndicationId(null);
+        setDosageTabs([]);
+      }
+    }
+
+    setEventAssessments(prev => prev.filter(a => a.productId !== idToDelete && a.productId !== backendId));
   };
 
   const scrollIndications = (direction) => {
@@ -1399,6 +1722,18 @@ export default function CaseDetailPage() {
       if (!id) return;
       setIsSaving(true);
       try {
+        const syncedProductTabs = productTabs.map(p => {
+          if (p.id === activeProductTab) {
+            return {
+              ...p,
+              productIndications: productIndications || [],
+              dosageTabs: dosageTabs || [],
+              activeDosageTab: activeDosageTab || 1
+            };
+          }
+          return p;
+        });
+
         const analysisDataObj = {
           caseNarrative: form.caseNarrative || '',
           caseComment: form.caseComment || '',
@@ -1426,6 +1761,9 @@ export default function CaseDetailPage() {
           // Additional Info Data
           attachments: attachments || [],
           references: references || [],
+          // Complete Products Data
+          productsData: syncedProductTabs,
+          activeProductTabId: activeProductTab,
         };
 
         // Save General Case Info & Analysis
@@ -1521,24 +1859,35 @@ export default function CaseDetailPage() {
         }
 
         // Upsert Products
-        for (const prod of productTabs) {
+        for (const prod of syncedProductTabs) {
+          const prodIndication = (prod.productIndications && prod.productIndications.length > 0
+            ? (prod.productIndications[0].reported || prod.productIndications[0].coded)
+            : (prod.indications && prod.indications.length > 0 ? prod.indications[0].reported : null));
+
+          const payload = {
+            drug_name: prod.name || prod.genericName || 'Unknown Product',
+            dose: prod.concentration || prod.dosageTabs?.[0]?.dose || null,
+            dose_unit: prod.units || prod.dosageTabs?.[0]?.doseUnits || null,
+            route: prod.route || prod.dosageTabs?.[0]?.patientRoute || null,
+            frequency: prod.dosageTabs?.[0]?.frequency || null,
+            indication: prodIndication,
+            suspect_flag: prod.role ? prod.role.toUpperCase() : 'SUSPECT',
+            action_taken: prod.actionTaken || null,
+            batch_number: prod.dosageTabs?.[0]?.batchLot || null,
+          };
+
           if (prod.backendId) {
-            await api.put(`/cases/${id}/products/${prod.backendId}`, {
-              drug_name: prod.name || prod.genericName,
-              indication: prod.indications && prod.indications.length > 0 ? prod.indications[0].reported : null
-            });
+            await api.put(`/cases/${id}/products/${prod.backendId}`, payload);
           } else {
             try {
-              const res = await api.post(`/cases/${id}/products`, {
-                drug_name: prod.name || prod.genericName || 'Unknown Product',
-                indication: prod.indications && prod.indications.length > 0 ? prod.indications[0].reported : null
-              });
+              const res = await api.post(`/cases/${id}/products`, payload);
               prod.backendId = res.data.data.product_id;
             } catch (e) {
               console.warn("Product save failed", e);
             }
           }
         }
+        setProductTabs([...syncedProductTabs]);
 
         // Upsert Events
         for (const evt of eventTabs) {
@@ -1755,7 +2104,7 @@ export default function CaseDetailPage() {
       window.removeEventListener('route_case', handleRouteCase);
       window.removeEventListener('lock_case', handleLockCase);
     };
-  }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, routingComments, patientHistories, labTests, labDates, labResults, isReadOnly, caseData, user]);
+  }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, routingComments, patientHistories, labTests, labDates, labResults, isReadOnly, caseData, user, productIndications, dosageTabs, activeProductTab, activeDosageTab]);
 
   useEffect(() => {
     return () => {
@@ -2010,7 +2359,7 @@ export default function CaseDetailPage() {
             {productTabs.map(tab => (
               <div
                 key={tab.id}
-                onClick={() => setActiveProductTab(tab.id)}
+                onClick={() => switchProductTab(tab.id)}
                 className={cn(
                   "px-3 py-0.5 text-[10px] font-bold border border-gray-400 cursor-pointer shadow-sm rounded-t-sm flex gap-1 items-center",
                   activeProductTab === tab.id
@@ -2036,21 +2385,7 @@ export default function CaseDetailPage() {
               </div>
             ))}
             <div
-              onClick={() => {
-                const newId = Date.now();
-                setProductTabs([...productTabs, {
-                  id: newId,
-                  name: 'New Product',
-                  isDR: false,
-                  genericName: '',
-                  obtainCountry: '',
-                  formulation: '',
-                  authCountry: '',
-                  role: 'Suspect',
-                  datasheets: DEFAULT_DATASHEETS
-                }]);
-                setActiveProductTab(newId);
-              }}
+              onClick={handleAddNewProductTab}
               className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 rounded-t-sm cursor-pointer hover:bg-gray-100"
             >
               (New)
@@ -3484,36 +3819,36 @@ export default function CaseDetailPage() {
                               <div><label className={lbl}>Last Dose</label><input className={inp} value={activeProduct?.lastDose || ''} onChange={(e) => updateActiveProduct('lastDose', e.target.value)} /></div>
                               <div><label className={lbl}>Duration of Administration</label><input className={inp} value={activeProduct?.durationOfAdmin || ''} onChange={(e) => updateActiveProduct('durationOfAdmin', e.target.value)} /></div>
                               <div className="flex gap-1">
-                                <div className="flex-1"><label className={lbl}>Total Dosage</label><input className={inp} /></div>
-                                <div className="w-12"><label className={lbl}>Units</label><input className={inp} /></div>
+                                <div className="flex-1"><label className={lbl}>Total Dosage</label><input className={inp} value={activeProduct?.totalDosage || ''} onChange={(e) => updateActiveProduct('totalDosage', e.target.value)} /></div>
+                                <div className="w-12"><label className={lbl}>Units</label><input className={inp} value={activeProduct?.totalDosageUnits || ''} onChange={(e) => updateActiveProduct('totalDosageUnits', e.target.value)} /></div>
                               </div>
                             </div>
                             <div className="grid grid-cols-4 gap-2">
-                              <div><label className={lbl}>Time Between First Dose/Primary Event</label><input className={inp} /></div>
-                              <div><label className={lbl}>Time between Last Dose/Primary Event</label><input className={inp} /></div>
+                              <div><label className={lbl}>Time Between First Dose/Primary Event</label><input className={inp} value={activeProduct?.timeFirstDosePrimaryEvent || ''} onChange={(e) => updateActiveProduct('timeFirstDosePrimaryEvent', e.target.value)} /></div>
+                              <div><label className={lbl}>Time between Last Dose/Primary Event</label><input className={inp} value={activeProduct?.timeLastDosePrimaryEvent || ''} onChange={(e) => updateActiveProduct('timeLastDosePrimaryEvent', e.target.value)} /></div>
                               <div className="flex gap-1">
-                                <div className="flex-1"><label className={lbl}>Total Dose to Primary Event</label><input className={inp} /></div>
-                                <div className="w-12"><label className={lbl}>Units</label><input className={inp} /></div>
+                                <div className="flex-1"><label className={lbl}>Total Dose to Primary Event</label><input className={inp} value={activeProduct?.totalDosePrimaryEvent || ''} onChange={(e) => updateActiveProduct('totalDosePrimaryEvent', e.target.value)} /></div>
+                                <div className="w-12"><label className={lbl}>Units</label><input className={inp} value={activeProduct?.totalDosePrimaryEventUnits || ''} onChange={(e) => updateActiveProduct('totalDosePrimaryEventUnits', e.target.value)} /></div>
                               </div>
                             </div>
                             <div className="grid grid-cols-4 gap-2">
-                              <div><label className={lbl}>Action Taken</label><input className={inp} value={activeProduct.actionTaken || ''} onChange={(e) => updateActiveProduct('actionTaken', e.target.value)} /></div>
-                              <div><label className={lbl}>Dechallenge Results</label><select className={sel}><option></option><option>Unk</option><option>Pos</option><option>Neg</option><option>N/A</option></select></div>
-                              <div><label className={lbl}>Date</label><input type="date" className={inp} /></div>
+                              <div><label className={lbl}>Action Taken</label><input className={inp} value={activeProduct?.actionTaken || ''} onChange={(e) => updateActiveProduct('actionTaken', e.target.value)} /></div>
+                              <div><label className={lbl}>Dechallenge Results</label><select className={sel} value={activeProduct?.dechallengeResults || ''} onChange={(e) => updateActiveProduct('dechallengeResults', e.target.value)}><option value=""></option><option value="Unk">Unk</option><option value="Pos">Pos</option><option value="Neg">Neg</option><option value="N/A">N/A</option></select></div>
+                              <div><label className={lbl}>Date</label><input type="date" className={inp} value={activeProduct?.dechallengeDate || ''} onChange={(e) => updateActiveProduct('dechallengeDate', e.target.value)} /></div>
                             </div>
                             <div className="grid grid-cols-4 gap-2">
-                              <div><label className={lbl}>Taken Previously / Tolerated</label><select className={sel}><option></option><option>Unknown / N/A</option><option>No / N/A</option><option>Yes / Unknown</option><option>Yes / Tolerated</option><option>Yes / Not Tolerated</option></select></div>
-                              <div><label className={lbl}>Rechallenge Results</label><select className={sel}><option></option><option>Unk</option><option>Pos</option><option>Neg</option><option>N/A</option></select></div>
-                              <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} /></div>
-                              <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} /></div>
+                              <div><label className={lbl}>Taken Previously / Tolerated</label><select className={sel} value={activeProduct?.takenPreviously || ''} onChange={(e) => updateActiveProduct('takenPreviously', e.target.value)}><option value=""></option><option value="Unknown / N/A">Unknown / N/A</option><option value="No / N/A">No / N/A</option><option value="Yes / Unknown">Yes / Unknown</option><option value="Yes / Tolerated">Yes / Tolerated</option><option value="Yes / Not Tolerated">Yes / Not Tolerated</option></select></div>
+                              <div><label className={lbl}>Rechallenge Results</label><select className={sel} value={activeProduct?.rechallengeResults || ''} onChange={(e) => updateActiveProduct('rechallengeResults', e.target.value)}><option value=""></option><option value="Unk">Unk</option><option value="Pos">Pos</option><option value="Neg">Neg</option><option value="N/A">N/A</option></select></div>
+                              <div><label className={lbl}>Start Date/Time</label><input type="datetime-local" className={inp} value={activeProduct?.rechallengeStartDate || ''} onChange={(e) => updateActiveProduct('rechallengeStartDate', e.target.value)} /></div>
+                              <div><label className={lbl}>Stop Date/Time</label><input type="datetime-local" className={inp} value={activeProduct?.rechallengeStopDate || ''} onChange={(e) => updateActiveProduct('rechallengeStopDate', e.target.value)} /></div>
                             </div>
                           </div>
 
                           {/* Checkboxes right side */}
                           <div className="space-y-1 mt-4">
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Abuse</label>
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Overdose</label>
-                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" /> Tampering</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeProduct?.abuse} onChange={(e) => updateActiveProduct('abuse', e.target.checked)} /> Abuse</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeProduct?.overdose} onChange={(e) => updateActiveProduct('overdose', e.target.checked)} /> Overdose</label>
+                            <label className="flex items-center gap-1 text-[10px] text-gray-700"><input type="checkbox" className="w-3 h-3" checked={!!activeProduct?.tampering} onChange={(e) => updateActiveProduct('tampering', e.target.checked)} /> Tampering</label>
                           </div>
                         </div>
                       </div>

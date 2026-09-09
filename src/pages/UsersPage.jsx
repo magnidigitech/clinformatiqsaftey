@@ -364,7 +364,7 @@ export default function UsersPage() {
     setLoginError('');
     setIsLoggingIn(true);
     try {
-      await login(username, password);
+      await login(username.trim().toLowerCase(), password);
     } catch (err) {
       setLoginError(err.response?.data?.message || 'Invalid username or password');
     } finally {

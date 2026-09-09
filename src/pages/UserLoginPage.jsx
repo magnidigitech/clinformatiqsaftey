@@ -21,7 +21,7 @@ export default function UserLoginPage() {
     setIsLoading(true);
     
     try {
-      await loginUser(username, password);
+      await loginUser(username.trim().toLowerCase(), password);
       // loginUser redirects to / on success
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed');

@@ -41,7 +41,7 @@ async function registerAdmin(req, res, next) {
 
       const user = await tx.user.create({
         data: {
-          username,
+          username: username.trim().toLowerCase(),
           password_hash,
           role: 'ADMIN',
           org_id: org.org_id,
@@ -118,7 +118,7 @@ async function registerUser(req, res, next) {
 
       const user = await tx.user.create({
         data: {
-          username,
+          username: username.trim().toLowerCase(),
           password_hash,
           role: 'STUDENT',
           org_id: org.org_id,
@@ -179,8 +179,11 @@ async function loginAdmin(req, res, next) {
       throw err;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { username },
+    const cleanUsername = String(username).trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        username: { equals: cleanUsername, mode: 'insensitive' }
+      },
       include: { organisation: true },
     });
 
@@ -252,8 +255,11 @@ async function loginUser(req, res, next) {
       throw err;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { username },
+    const cleanUsername = String(username).trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        username: { equals: cleanUsername, mode: 'insensitive' }
+      },
       include: { organisation: true, batch: true },
     });
 
@@ -443,8 +449,11 @@ async function loginGeneric(req, res, next) {
       throw err;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { username },
+    const cleanUsername = String(username).trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        username: { equals: cleanUsername, mode: 'insensitive' }
+      },
       include: { organisation: true, batch: true },
     });
 
