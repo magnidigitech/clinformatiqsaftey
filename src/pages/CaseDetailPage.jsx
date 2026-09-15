@@ -1910,39 +1910,39 @@ export default function CaseDetailPage() {
           eventAssessments: eventAssessments || [],
         };
 
-        // Save General Case Info & Analysis
-        await api.put(`/cases/${id}`, {
-          receipt_date: form.caseReceiptDate,
-          aware_date: form.safetyReceiptDate,
-          case_type: form.caseReportType,
-          case_country: form.caseCountry,
-          serious_flag: (form.caseSerious === 'Yes' || form.caseSeriousSummary === 'Yes') ? 'Y' : 'N',
-          case_narrative: form.caseNarrative || '',
-          analysis_data: JSON.stringify(analysisDataObj),
-          attachments: attachments || [],
-          references: references || [],
-          patient_history_data: JSON.stringify(patientHistories),
-          lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
-        });
+        // Stage 1: Save General Case Info & Patient Info in parallel
+        await Promise.all([
+          api.put(`/cases/${id}`, {
+            receipt_date: form.caseReceiptDate,
+            aware_date: form.safetyReceiptDate,
+            case_type: form.caseReportType,
+            case_country: form.caseCountry,
+            serious_flag: (form.caseSerious === 'Yes' || form.caseSeriousSummary === 'Yes') ? 'Y' : 'N',
+            case_narrative: form.caseNarrative || '',
+            analysis_data: JSON.stringify(analysisDataObj),
+            attachments: attachments || [],
+            references: references || [],
+            patient_history_data: JSON.stringify(patientHistories),
+            lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
+          }),
+          api.post(`/cases/${id}/patient`, {
+            first_name: form.patFirstName,
+            last_name: form.patLastName,
+            patient_code: [form.patFirstName, form.patLastName].filter(Boolean).join(' ') || form.patInitials,
+            dob: form.patDob,
+            age_value: form.patAge,
+            age_unit: form.patAgeUnits,
+            sex: form.patGender,
+            weight_kg: form.patWeight,
+            height_cm: form.patHeight,
+            ethnicity: form.patEthnicity,
+            patient_history_data: JSON.stringify(patientHistories),
+            lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
+          })
+        ]);
 
-        // Save Patient Info
-        await api.post(`/cases/${id}/patient`, {
-          first_name: form.patFirstName,
-          last_name: form.patLastName,
-          patient_code: [form.patFirstName, form.patLastName].filter(Boolean).join(' ') || form.patInitials,
-          dob: form.patDob,
-          age_value: form.patAge,
-          age_unit: form.patAgeUnits,
-          sex: form.patGender,
-          weight_kg: form.patWeight,
-          height_cm: form.patHeight,
-          ethnicity: form.patEthnicity,
-          patient_history_data: JSON.stringify(patientHistories),
-          lab_data: JSON.stringify({ tests: labTests, dates: labDates, results: labResults }),
-        });
-
-        // Upsert Reporters
-        for (const rep of reporterTabs) {
+        // Stage 2: Reporters, Product deletions, Event deletions, Product upserts in parallel
+        const reporterPromises = reporterTabs.map(async (rep) => {
           const reporterPayload = {
             salutation: rep.sal || null,
             first_name: rep.firstName || null,
@@ -1986,24 +1986,12 @@ export default function CaseDetailPage() {
               console.warn("Reporter save failed", e);
             }
           }
-        }
+        });
 
-        // Delete removed products from database
-        for (const prodId of deletedProductIds) {
-          try {
-            await api.delete(`/cases/${id}/products/${prodId}`);
-          } catch (e) {}
-        }
+        const delProductPromises = deletedProductIds.map(prodId => api.delete(`/cases/${id}/products/${prodId}`).catch(() => {}));
+        const delEventPromises = deletedEventIds.map(evtId => api.delete(`/cases/${id}/events/${evtId}`).catch(() => {}));
 
-        // Delete removed events from database
-        for (const evtId of deletedEventIds) {
-          try {
-            await api.delete(`/cases/${id}/events/${evtId}`);
-          } catch (e) {}
-        }
-
-        // Upsert Products
-        for (const prod of syncedProductTabs) {
+        const productPromises = syncedProductTabs.map(async (prod) => {
           const prodIndication = (prod.productIndications && prod.productIndications.length > 0
             ? (prod.productIndications[0].reported || prod.productIndications[0].coded)
             : (prod.indications && prod.indications.length > 0 ? prod.indications[0].reported : null));
@@ -2030,19 +2018,19 @@ export default function CaseDetailPage() {
               console.warn("Product save failed", e);
             }
           }
-        }
+        });
+
+        await Promise.all([...reporterPromises, ...delProductPromises, ...delEventPromises, ...productPromises]);
         setProductTabs([...syncedProductTabs]);
 
-        // Upsert Events
-        for (const evt of eventTabs) {
-          // Compute causalities for this event
+        // Stage 3: Upsert Events in parallel (now that product backendIds exist)
+        const eventPromises = eventTabs.map(async (evt) => {
           const causalities = eventAssessments
             .filter(a => a.eventId === evt.id)
             .map(a => {
               const prod = productTabs.find(p => p.id === a.productId);
               if (!prod || !prod.backendId) return null;
 
-              // Extract only listedness keys
               const listednessData = {};
               Object.keys(a).forEach(k => {
                 if (k.startsWith('listedness-')) listednessData[k] = a[k];
@@ -2083,12 +2071,14 @@ export default function CaseDetailPage() {
               console.warn("Event save failed", e);
             }
           }
-        }
+        });
+
+        await Promise.all(eventPromises);
         setEventTabs([...eventTabs]);
 
-        // Upsert Action Items
-        for (const item of actionItems) {
-          if (!item.code && !item.description) continue;
+        // Stage 4: Upsert Action Items in parallel
+        const actionPromises = actionItems.map(async (item) => {
+          if (!item.code && !item.description) return;
 
           if (item.backendId) {
             await api.put(`/cases/${id}/action-items/${item.backendId}`, {
@@ -2112,7 +2102,9 @@ export default function CaseDetailPage() {
               console.warn("Action Item save failed", e);
             }
           }
-        }
+        });
+
+        await Promise.all(actionPromises);
 
         setIsSaving(false);
         window.dispatchEvent(new CustomEvent('save_success'));
