@@ -28,5 +28,5 @@ ENV PORT=3001
 EXPOSE 3001
 
 # Run database synchronization and start the server
-CMD npx prisma db push --accept-data-loss && node server/index.js
+CMD (npx prisma db push --accept-data-loss || true) && node server/index.js
 
