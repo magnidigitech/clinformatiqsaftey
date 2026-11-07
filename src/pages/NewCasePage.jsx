@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import useAuth from '../hooks/useAuth';
 import { useCases } from '../hooks/useCases';
 import { cn } from '../lib/utils';
-import { AlertCircle, FileText, Check, Unlock, Search, X } from 'lucide-react';
+import { AlertCircle, FileText, Check, Unlock, Search, X, Loader2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import DrugAutocomplete from '../components/ui/DrugAutocomplete';
 import SearchableDropdown from '../components/ui/SearchableDropdown';
@@ -51,6 +51,9 @@ export default function NewCasePage() {
   const [isBookInMode, setIsBookInMode] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [pendingPayload, setPendingPayload] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
+  const clientTokenRef = useRef(null);
 
   const [searchResults, setSearchResults] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);
@@ -175,15 +178,31 @@ export default function NewCasePage() {
   };
 
   const handleBookIn = () => {
-    if (!validateForm()) return;
+    if (!validateForm() || isSubmitting) return;
+
+    // Generate unique client token for idempotency
+    const token = 'ct_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    clientTokenRef.current = token;
+
+    const isSerious = (
+      form.seriousDeath || 
+      form.seriousHospitalized || 
+      form.seriousLifeThreatening || 
+      form.seriousCongenital || 
+      form.seriousDisability || 
+      form.seriousIntervention || 
+      form.seriousMedicallySignificant || 
+      form.seriousOther
+    );
 
     const payload = {
+      client_token: token,
       receipt_date: form.caseReceiptDate,
       aware_date: form.safetyReceiptDate || null,
       case_type: form.caseReportType,
       case_country: form.caseCountry ? (getCountryName(form.caseCountry) || form.caseCountry) : null,
-      serious_flag: (form.seriousDeath || form.seriousHospitalized || form.seriousLifeThreatening) ? 'Y' : 'N',
-      initial_justification: form.initialJustification,
+      serious_flag: isSerious ? 'Y' : 'N',
+      initial_justification: form.initialJustification || 'Initial case entry',
       patient: {
         initials: [form.patFirstName, form.patLastName].filter(Boolean).join(' ') || form.patNameOrInitials || 'UNKNOWN',
         firstName: form.patFirstName || '',
@@ -204,6 +223,39 @@ export default function NewCasePage() {
       },
       product: {
         productName: form.productName,
+        genericName: form.genericName || null,
+      },
+      event: {
+        descriptionAsReported: form.descriptionAsReported,
+        onsetDateTime: form.onsetDateTime || null,
+        reportedCausality: form.reportedCausality || null,
+        seriousness: {
+          seriousDeath: form.seriousDeath,
+          seriousHospitalized: form.seriousHospitalized,
+          seriousCongenital: form.seriousCongenital,
+          seriousLifeThreatening: form.seriousLifeThreatening,
+          seriousDisability: form.seriousDisability,
+          seriousIntervention: form.seriousIntervention,
+          seriousMedicallySignificant: form.seriousMedicallySignificant,
+          seriousOther: form.seriousOther,
+          seriousOtherText: form.seriousOtherText || '',
+          caseNonSerious: form.caseNonSerious,
+          caseUnableToDetermine: form.caseUnableToDetermine
+        }
+      },
+      study: {
+        projectId: form.projectId || '',
+        studyId: form.studyId || '',
+        centerId: form.centerId || '',
+      },
+      literature: {
+        litId: form.litId || '',
+        litKeywords: form.litKeywords || '',
+        litJournal: form.litJournal || '',
+        litTitle: form.litTitle || '',
+      },
+      formData: {
+        ...form,
       },
       attachments
     };
@@ -213,6 +265,11 @@ export default function NewCasePage() {
   };
 
   const handleModalYes = async () => {
+    // Strictly guard against duplicate submissions (double clicks, lag, re-renders)
+    if (isSubmittingRef.current || isSubmitting) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+
     try {
       const res = await createCase(pendingPayload);
       if (res && res.data && res.data.case_id) {
@@ -221,13 +278,23 @@ export default function NewCasePage() {
         navigate('/cases/open');
       }
     } catch (err) {
-      console.error(err);
+      console.error("Case creation failed:", err);
+      alert("Case creation failed: " + (err.response?.data?.message || err.message || "Please check your inputs and try again."));
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+      // Generate new token on retry to avoid collision
+      const newToken = 'ct_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+      clientTokenRef.current = newToken;
+      setPendingPayload(prev => prev ? ({ ...prev, client_token: newToken }) : null);
     }
   };
 
   const handleModalNo = () => {
+    if (isSubmitting) return;
     setShowSuccessModal(false);
     setPendingPayload(null);
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
   };
 
   const rangeDate = new Intl.DateTimeFormat('en-GB', {
@@ -609,7 +676,11 @@ export default function NewCasePage() {
               </>
             ) : (
               <div className="w-full flex justify-center">
-                <Button onClick={handleBookIn} className="h-10 px-12 rounded-sm font-bold shadow-sm bg-brand-primary hover:bg-brand-dark text-white border-0">
+                <Button 
+                  onClick={handleBookIn} 
+                  disabled={isSubmitting}
+                  className="h-10 px-12 rounded-sm font-bold shadow-sm bg-brand-primary hover:bg-brand-dark text-white border-0 disabled:opacity-50"
+                >
                   Book-In
                 </Button>
               </div>
@@ -724,11 +795,27 @@ export default function NewCasePage() {
             </div>
 
             <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-3 rounded-b-sm">
-              <Button variant="outline" onClick={handleModalNo} className="rounded-sm px-6 font-bold bg-white">
+              <Button 
+                variant="outline" 
+                onClick={handleModalNo} 
+                disabled={isSubmitting}
+                className="rounded-sm px-6 font-bold bg-white disabled:opacity-50"
+              >
                 No
               </Button>
-              <Button onClick={handleModalYes} className="rounded-sm px-8 font-bold shadow-sm">
-                Yes
+              <Button 
+                onClick={handleModalYes} 
+                disabled={isSubmitting}
+                className="rounded-sm px-8 font-bold shadow-sm bg-brand-primary hover:bg-brand-dark text-white disabled:opacity-60 flex items-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin text-white" />
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  <span>Yes</span>
+                )}
               </Button>
             </div>
           </div>

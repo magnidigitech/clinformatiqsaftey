@@ -6,14 +6,15 @@ const prisma = require('../prisma/client');
  * Format: PV-{YEAR}-{ORG_ID padded 2}-{SEQ padded 4}
  */
 async function generateCaseNumber(orgId) {
+  const effectiveOrgId = (orgId != null && !isNaN(orgId)) ? parseInt(orgId, 10) : 6;
   const year = new Date().getFullYear();
-  const orgPad = String(orgId).padStart(2, '0');
+  const orgPad = String(effectiveOrgId).padStart(2, '0');
   const prefix = `PV-${year}-${orgPad}-`;
 
   // Find the last case for this org + year
   const lastCase = await prisma.sptOrgCase.findFirst({
     where: {
-      org_id: orgId,
+      org_id: effectiveOrgId,
       case_number: { startsWith: prefix },
     },
     orderBy: { case_number: 'desc' },
@@ -51,9 +52,10 @@ async function validateCaseAccess(caseId, user) {
     throw err;
   }
 
-  // INSTRUCTOR and ADMIN can access all cases in their org OR cases assigned to them
+  // INSTRUCTOR and ADMIN can access all cases in their org OR cases assigned to them (Super Admin without org_id has system-wide access)
   if (
     ['INSTRUCTOR', 'ADMIN'].includes(user.role) &&
+    user.org_id != null &&
     caseRecord.org_id !== user.org_id &&
     caseRecord.assigned_to !== user.user_id
   ) {
@@ -66,11 +68,15 @@ async function validateCaseAccess(caseId, user) {
 }
 
 /**
- * Assert case is in an editable state
+ * Assert case is in an editable state.
+ * Cases in QC_COMPLETED state are strictly read-only.
  */
 function assertEditable(caseRecord, user) {
-  // As per user request: Allow saving in any workflow state.
-  return;
+  if (caseRecord && caseRecord.workflow_state === 'QC_COMPLETED') {
+    const err = new Error('This case has completed QC and is read-only. Modifications are not allowed.');
+    err.statusCode = 403;
+    throw err;
+  }
 }
 
 module.exports = {

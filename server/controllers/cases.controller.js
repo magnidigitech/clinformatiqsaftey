@@ -76,9 +76,22 @@ async function list(req, res, next) {
   }
 }
 
+// In-flight and recent creations map for idempotency and duplicate-submission protection
+const inFlightCreations = new Map();
+const completedCreations = new Map();
+
+function cleanOldCreations() {
+  const now = Date.now();
+  for (const [key, item] of completedCreations.entries()) {
+    if (now - item.timestamp > 60000) {
+      completedCreations.delete(key);
+    }
+  }
+}
+
 /**
  * POST /api/cases
- * Create a new case with auto-generated case_number.
+ * Create a new case with auto-generated case_number and idempotency/duplicate protection.
  */
 async function create(req, res, next) {
   try {
@@ -92,109 +105,224 @@ async function create(req, res, next) {
       patient,
       reporter,
       product,
+      event,
+      study,
+      literature,
+      formData,
       initial_justification,
       attachments,
-      references
+      references,
+      client_token
     } = req.body;
 
-    const case_number = await generateCaseNumber(user.org_id);
+    const token = client_token || req.headers['idempotency-key'] || null;
+    const patientCode = (patient?.initials || [patient?.firstName, patient?.lastName].filter(Boolean).join(' ') || '').toLowerCase().trim();
+    const drugName = (product?.productName || '').toLowerCase().trim();
+    const receiptDateStr = receipt_date ? String(receipt_date).split('T')[0] : '';
 
-    const newCase = await prisma.$transaction(async (tx) => {
-      // Prepare initial analysis_data containing attachments and references
-      let initialAnalysis = {};
-      if (req.body.analysis_data) {
-        try {
-          initialAnalysis = typeof req.body.analysis_data === 'string' 
-            ? JSON.parse(req.body.analysis_data) 
-            : req.body.analysis_data;
-        } catch (e) {
-          initialAnalysis = {};
-        }
+    cleanOldCreations();
+
+    // 1. Primary deduplication key
+    const dedupeKey = token 
+      ? `token_${user.user_id}_${token}`
+      : `heuristic_${user.user_id}_${receiptDateStr}_${drugName}_${patientCode}`;
+
+    // 2. If an identical creation is currently in-flight, await and return its result
+    if (inFlightCreations.has(dedupeKey)) {
+      const existingPromise = inFlightCreations.get(dedupeKey);
+      const result = await existingPromise;
+      return res.status(200).json(result);
+    }
+
+    // 3. If an identical creation completed within the last 60 seconds, return the cached case
+    if (completedCreations.has(dedupeKey)) {
+      const cached = completedCreations.get(dedupeKey);
+      return res.status(200).json(cached.response);
+    }
+
+    // 4. Database heuristic duplicate check: did this user create an identical case within the last 15 seconds?
+    const fifteenSecondsAgo = new Date(Date.now() - 15000);
+    const existingRecentCase = await prisma.sptOrgCase.findFirst({
+      where: {
+        student_id: user.user_id,
+        created_at: { gte: fifteenSecondsAgo },
+        case_type: case_type || undefined,
+        products: drugName ? { some: { drug_name: { equals: drugName, mode: 'insensitive' } } } : undefined,
+      },
+      include: {
+        patient: true,
+        products: true,
+        events: true,
+        reporters: true,
       }
-      if (attachments && Array.isArray(attachments)) {
-        initialAnalysis.attachments = attachments;
-      }
-      if (references && Array.isArray(references)) {
-        initialAnalysis.references = references;
-      }
-
-      // 1. Create the case
-      const createdCase = await tx.sptOrgCase.create({
-        data: {
-          case_number,
-          student_id: user.user_id,
-          org_id: user.org_id,
-          workflow_state: 'DRAFT',
-          case_country: case_country || (reporter ? reporter.country : null) || null,
-          receipt_date: receipt_date ? new Date(receipt_date) : null,
-          aware_date: aware_date ? new Date(aware_date) : null,
-          case_type: case_type || null,
-          serious_flag: serious_flag || 'N',
-          case_narrative: req.body.case_narrative || null,
-          analysis_data: Object.keys(initialAnalysis).length > 0 ? JSON.stringify(initialAnalysis) : null,
-        },
-      });
-
-      const caseId = createdCase.case_id;
-
-      // 2. Workflow Log
-      await tx.workflowLog.create({
-        data: {
-          case_id: caseId,
-          from_state: null,
-          to_state: 'DRAFT',
-          actioned_by: user.user_id,
-          comments: initial_justification || 'Case created',
-        },
-      });
-
-      // 3. Create Patient (if provided)
-      if (patient) {
-        await tx.sptOrgCad.create({
-          data: {
-            case_id: caseId,
-            dob: patient.dob ? new Date(patient.dob) : null,
-            age_value: patient.age ? parseInt(patient.age, 10) : null,
-            age_unit: patient.ageUnits || null,
-            sex: patient.gender || null,
-            patient_code: patient.initials || [patient.firstName, patient.lastName].filter(Boolean).join(' ') || null,
-            first_name: patient.firstName || null,
-            last_name: patient.lastName || null,
-          }
-        });
-      }
-
-      // 4. Create Product (if provided)
-      if (product && product.productName) {
-        await tx.sptOrgProduct.create({
-          data: {
-            case_id: caseId,
-            drug_name: product.productName,
-          }
-        });
-      }
-
-      // 5. Create Reporter (if provided)
-      if (reporter && (reporter.firstName || reporter.lastName || reporter.country)) {
-        await tx.reporter.create({
-          data: {
-            case_id: caseId,
-            salutation: reporter.sal || reporter.salutation || null,
-            first_name: reporter.firstName || null,
-            last_name: reporter.lastName || null,
-            suffix: reporter.suffix || null,
-            country: reporter.country || null,
-            state: reporter.state || null,
-            postal_code: reporter.postalCode || reporter.postal_code || null,
-            reporter_type: reporter.reporterType || null,
-          }
-        });
-      }
-
-      return createdCase;
     });
 
-    res.status(201).json({ success: true, data: newCase });
+    if (existingRecentCase) {
+      const responseData = { success: true, data: existingRecentCase, duplicate_prevented: true };
+      completedCreations.set(dedupeKey, { response: responseData, timestamp: Date.now() });
+      return res.status(200).json(responseData);
+    }
+
+    // 5. Execute new case creation wrapped in inFlight tracking
+    const creationPromise = (async () => {
+      const effectiveOrgId = (user.org_id != null && !isNaN(user.org_id)) ? parseInt(user.org_id, 10) : 6;
+      const case_number = await generateCaseNumber(effectiveOrgId);
+
+      return await prisma.$transaction(async (tx) => {
+        // Prepare initial analysis_data containing attachments, references, study, literature, and form state
+        let initialAnalysis = {};
+        if (req.body.analysis_data) {
+          try {
+            initialAnalysis = typeof req.body.analysis_data === 'string' 
+              ? JSON.parse(req.body.analysis_data) 
+              : req.body.analysis_data;
+          } catch (e) {
+            initialAnalysis = {};
+          }
+        }
+        if (attachments && Array.isArray(attachments)) {
+          initialAnalysis.attachments = attachments;
+        }
+        if (references && Array.isArray(references)) {
+          initialAnalysis.references = references;
+        }
+        if (study) {
+          initialAnalysis.study = study;
+        }
+        if (literature) {
+          initialAnalysis.literature = literature;
+        }
+        if (token) {
+          initialAnalysis.client_token = token;
+        }
+        if (formData) {
+          initialAnalysis.formData = { ...(initialAnalysis.formData || {}), ...formData };
+        }
+
+        // 1. Create the case
+        const createdCase = await tx.sptOrgCase.create({
+          data: {
+            case_number,
+            student_id: user.user_id,
+            org_id: effectiveOrgId,
+            workflow_state: 'DRAFT',
+            case_country: case_country || (reporter ? reporter.country : null) || null,
+            receipt_date: receipt_date ? new Date(receipt_date) : null,
+            aware_date: aware_date ? new Date(aware_date) : null,
+            case_type: case_type || null,
+            serious_flag: serious_flag || 'N',
+            case_narrative: req.body.case_narrative || null,
+            analysis_data: Object.keys(initialAnalysis).length > 0 ? JSON.stringify(initialAnalysis) : null,
+          },
+        });
+
+        const caseId = createdCase.case_id;
+
+        // 2. Workflow Log
+        await tx.workflowLog.create({
+          data: {
+            case_id: caseId,
+            from_state: null,
+            to_state: 'DRAFT',
+            actioned_by: user.user_id,
+            comments: initial_justification || 'Case created',
+          },
+        });
+
+        // 3. Create Patient (if provided)
+        if (patient) {
+          await tx.sptOrgCad.create({
+            data: {
+              case_id: caseId,
+              dob: patient.dob ? new Date(patient.dob) : null,
+              age_value: patient.age ? parseInt(patient.age, 10) : null,
+              age_unit: patient.ageUnits || null,
+              sex: patient.gender || null,
+              patient_code: patient.initials || [patient.firstName, patient.lastName].filter(Boolean).join(' ') || null,
+              first_name: patient.firstName || null,
+              last_name: patient.lastName || null,
+            }
+          });
+        }
+
+        // 4. Create Product (if provided)
+        let createdProduct = null;
+        const prodName = product ? (product.productName || product.drug_name) : null;
+        if (product && prodName) {
+          createdProduct = await tx.sptOrgProduct.create({
+            data: {
+              case_id: caseId,
+              drug_name: prodName,
+              dose: product.dose || null,
+              dose_unit: product.doseUnits || product.dose_unit || null,
+              route: product.route || null,
+              indication: product.indication || null,
+            }
+          });
+        }
+
+        // 5. Create Initial Event (if provided)
+        const eventData = event || (req.body.descriptionAsReported ? {
+          descriptionAsReported: req.body.descriptionAsReported,
+          onsetDateTime: req.body.onsetDateTime,
+          reportedCausality: req.body.reportedCausality,
+          seriousness: req.body.seriousness,
+        } : null);
+
+        if (eventData && (eventData.descriptionAsReported || eventData.entity_title)) {
+          const eventTitle = eventData.descriptionAsReported || eventData.entity_title;
+          const seriousCriteria = eventData.seriousness ? JSON.stringify(eventData.seriousness) : null;
+          const createdEvt = await tx.sptOrgEvent.create({
+            data: {
+              case_id: caseId,
+              entity_title: eventTitle,
+              narrative: eventTitle,
+              onset_date: eventData.onsetDateTime ? new Date(eventData.onsetDateTime) : (eventData.onsetDate ? new Date(eventData.onsetDate) : null),
+              serious_criteria: seriousCriteria,
+            }
+          });
+
+          if (createdProduct && eventData.reportedCausality) {
+            await tx.sptOrgEventCausality.create({
+              data: {
+                event_id: createdEvt.event_id,
+                product_id: createdProduct.product_id,
+                causality_reported: eventData.reportedCausality,
+              }
+            });
+          }
+        }
+
+        // 6. Create Reporter (if provided)
+        if (reporter && (reporter.firstName || reporter.lastName || reporter.country)) {
+          await tx.reporter.create({
+            data: {
+              case_id: caseId,
+              salutation: reporter.sal || reporter.salutation || null,
+              first_name: reporter.firstName || null,
+              last_name: reporter.lastName || null,
+              suffix: reporter.suffix || null,
+              country: reporter.country || null,
+              state: reporter.state || null,
+              postal_code: reporter.postalCode || reporter.postal_code || null,
+              reporter_type: reporter.reporterType || null,
+            }
+          });
+        }
+
+        return createdCase;
+      });
+    })();
+
+    inFlightCreations.set(dedupeKey, creationPromise);
+    try {
+      const newCase = await creationPromise;
+      const responseData = { success: true, data: newCase };
+      completedCreations.set(dedupeKey, { response: responseData, timestamp: Date.now() });
+      res.status(201).json(responseData);
+    } finally {
+      inFlightCreations.delete(dedupeKey);
+    }
   } catch (err) {
     next(err);
   }
@@ -344,7 +472,7 @@ async function update(req, res, next) {
     assertEditable(caseRecord, req.user);
 
     // Only the case owner (student) can update
-    const { receipt_date, aware_date, case_type, case_country, serious_flag, workflow_state, assigned_to, case_narrative, analysis_data, patient_history_data, lab_data, attachments, references } = req.body;
+    const { receipt_date, aware_date, case_type, case_country, serious_flag, workflow_state, assigned_to, case_narrative, analysis_data, patient_history_data, lab_data, attachments, references, formData } = req.body;
 
     // Only the case owner (student) or current assignee can update unless it's a routing update
     if (req.user.role === 'STUDENT' && caseRecord.student_id !== req.user.user_id && caseRecord.assigned_to !== req.user.user_id && !workflow_state && !assigned_to) {
@@ -393,7 +521,7 @@ async function update(req, res, next) {
     };
 
     let finalAnalysisData = undefined;
-    if (analysis_data !== undefined || attachments !== undefined || references !== undefined) {
+    if (analysis_data !== undefined || attachments !== undefined || references !== undefined || formData !== undefined) {
       let currentObj = {};
       if (caseRecord.analysis_data) {
         try {
@@ -405,6 +533,9 @@ async function update(req, res, next) {
           const parsed = typeof analysis_data === 'string' ? JSON.parse(analysis_data) : analysis_data;
           currentObj = { ...currentObj, ...parsed };
         } catch (e) {}
+      }
+      if (formData !== undefined) {
+        currentObj.formData = { ...(currentObj.formData || {}), ...formData };
       }
       if (attachments !== undefined) {
         currentObj.attachments = attachments;
@@ -524,7 +655,8 @@ async function submit(req, res, next) {
 async function lock(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const updatedCase = await prisma.sptOrgCase.update({
       where: { case_id: caseId },

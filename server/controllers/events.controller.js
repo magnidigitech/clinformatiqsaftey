@@ -1,6 +1,6 @@
 // server/controllers/events.controller.js – Adverse Event CRUD
 const prisma = require('../prisma/client');
-const { validateCaseAccess } = require('../services/case.service');
+const { validateCaseAccess, assertEditable } = require('../services/case.service');
 
 /**
  * GET /api/cases/:id/events
@@ -29,7 +29,8 @@ async function list(req, res, next) {
 async function create(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const {
       chapter, block, category, entity_title, entity_code, onset_date, end_date,
@@ -82,7 +83,8 @@ async function update(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const eventId = parseInt(req.params.eventId, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     // Verify event belongs to case
     const existing = await prisma.sptOrgEvent.findFirst({
@@ -155,7 +157,8 @@ async function remove(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const eventId = parseInt(req.params.eventId, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const existing = await prisma.sptOrgEvent.findFirst({
       where: { event_id: eventId, case_id: caseId },

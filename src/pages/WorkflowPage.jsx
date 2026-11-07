@@ -300,11 +300,17 @@ export default function WorkflowPage() {
                     const event = c.events?.[0];
                     const reporter = c.reporters?.[0];
                     const badge = getWorkflowBadge(c.workflow_state);
+                    const isCompleted = c.workflow_state === 'QC_COMPLETED';
                     
                     return (
                     <tr 
                       key={c.id || c.case_number} 
-                      className="hover:bg-slate-50/90 transition-colors group cursor-pointer"
+                      className={cn(
+                        "transition-colors group cursor-pointer",
+                        isCompleted 
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white font-medium" 
+                          : "hover:bg-slate-50/90"
+                      )}
                       onContextMenu={(e) => handleContextMenu(e, c)}
                       onClick={() => navigate(`/cases/${c.case_id || c.id}`)}
                     >
@@ -316,31 +322,36 @@ export default function WorkflowPage() {
                             className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4 border-slate-300 cursor-pointer" 
                           />
                           {c.locked_by ? (
-                            <Lock size={15} className="text-amber-500 shrink-0" title={`Locked by ${c.locked_by}`} />
+                            <Lock size={15} className={isCompleted ? "text-white shrink-0" : "text-amber-500 shrink-0"} title={`Locked by ${c.locked_by}`} />
                           ) : (
-                            <Unlock size={15} className="text-slate-300 shrink-0" title="Unlocked" />
+                            <Unlock size={15} className={isCompleted ? "text-white/60 shrink-0" : "text-slate-300 shrink-0"} title="Unlocked" />
                           )}
                         </div>
                       </td>
 
                       {/* Dates */}
                       <td className="px-4 py-3.5 align-middle">
-                        <div className="font-semibold text-slate-800 text-[12px]">{formatDate(c.receipt_date) || '—'}</div>
-                        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
-                          <span className="text-slate-400 font-medium">Aware:</span> {formatDate(c.aware_date) || '—'}
+                        <div className={cn("font-semibold text-[12px]", isCompleted ? "text-white" : "text-slate-800")}>{formatDate(c.receipt_date) || '—'}</div>
+                        <div className={cn("text-[11px] mt-0.5 flex items-center gap-1", isCompleted ? "text-white/80" : "text-slate-500")}>
+                          <span className={cn("font-medium", isCompleted ? "text-white/70" : "text-slate-400")}>Aware:</span> {formatDate(c.aware_date) || '—'}
                         </div>
                       </td>
 
                       {/* Days Open */}
                       <td className="px-4 py-3.5 align-middle">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                        <span className={cn(
+                          "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border",
+                          isCompleted ? "bg-white/20 text-white border-white/30" : "bg-slate-100 text-slate-700 border-slate-200"
+                        )}>
                           {getDaysOpen(c.receipt_date) || '0'} {getDaysOpen(c.receipt_date) === 1 ? 'day' : 'days'}
                         </span>
                       </td>
 
                       {/* Due Date */}
                       <td className="px-4 py-3.5 align-middle">
-                        {(() => {
+                        {isCompleted ? (
+                          <span className="text-white/60 text-xs font-semibold">—</span>
+                        ) : (() => {
                           const { dueDate, phase } = getDueDate(c);
                           const status = getDueStatus(dueDate);
                           if (!dueDate) return <span className="text-slate-400 text-xs">—</span>;
@@ -362,7 +373,10 @@ export default function WorkflowPage() {
                         <div>
                           <Link 
                             to={`/cases/${c.case_id || c.id}`} 
-                            className="text-emerald-700 hover:text-emerald-900 font-bold text-[13px] tracking-tight hover:underline inline-block" 
+                            className={cn(
+                              "font-bold text-[13px] tracking-tight hover:underline inline-block",
+                              isCompleted ? "text-white hover:text-white/90" : "text-emerald-700 hover:text-emerald-900"
+                            )} 
                             onClick={e => e.stopPropagation()}
                           >
                             {c.case_number}
@@ -371,20 +385,20 @@ export default function WorkflowPage() {
                         <div className="mt-1">
                           <span className={cn(
                             "px-2.5 py-0.5 rounded-full font-semibold text-[11px] inline-flex items-center gap-1 shadow-2xs",
-                            badge.className
+                            isCompleted ? "bg-white/20 text-white border border-white/30" : badge.className
                           )}>
-                            {badge.label}
+                            {isCompleted ? 'QC Completed' : badge.label}
                           </span>
                         </div>
                       </td>
 
                       {/* Product */}
                       <td className="px-4 py-3.5 align-middle">
-                        <div className="font-bold text-slate-800 text-[12px] truncate max-w-[150px]" title={product?.drug_name || ''}>
-                          {product?.drug_name || <span className="text-slate-400 font-normal italic">(No Product)</span>}
+                        <div className={cn("font-bold text-[12px] truncate max-w-[150px]", isCompleted ? "text-white" : "text-slate-800")} title={product?.drug_name || ''}>
+                          {product?.drug_name || <span className={cn("font-normal italic", isCompleted ? "text-white/70" : "text-slate-400")}>(No Product)</span>}
                         </div>
                         {product?.indication && (
-                          <div className="text-[11px] text-slate-500 uppercase mt-0.5 truncate max-w-[150px] font-medium" title={product.indication}>
+                          <div className={cn("text-[11px] uppercase mt-0.5 truncate max-w-[150px] font-medium", isCompleted ? "text-white/80" : "text-slate-500")} title={product.indication}>
                             {product.indication}
                           </div>
                         )}
@@ -392,11 +406,11 @@ export default function WorkflowPage() {
 
                       {/* Event */}
                       <td className="px-4 py-3.5 align-middle">
-                        <div className="font-semibold text-slate-800 text-[12px] line-clamp-2 max-w-[180px]" title={event?.entity_title || event?.entity_code || ''}>
-                          {event?.entity_title || event?.entity_code || <span className="text-slate-400 font-normal italic">(No Event)</span>}
+                        <div className={cn("font-semibold text-[12px] line-clamp-2 max-w-[180px]", isCompleted ? "text-white" : "text-slate-800")} title={event?.entity_title || event?.entity_code || ''}>
+                          {event?.entity_title || event?.entity_code || <span className={cn("font-normal italic", isCompleted ? "text-white/70" : "text-slate-400")}>(No Event)</span>}
                         </div>
                         {event?.narrative && event.narrative !== event.entity_title && (
-                          <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-1 max-w-[180px]" title={event.narrative}>
+                          <div className={cn("text-[11px] mt-0.5 line-clamp-1 max-w-[180px]", isCompleted ? "text-white/80" : "text-slate-500")} title={event.narrative}>
                             {event.narrative}
                           </div>
                         )}
@@ -404,11 +418,11 @@ export default function WorkflowPage() {
 
                       {/* Reporter */}
                       <td className="px-4 py-3.5 align-middle">
-                        <div className="font-semibold text-slate-700 text-[12px]">
-                          {reporter?.reporter_type || <span className="text-slate-400 font-normal italic">(No Reporter)</span>}
+                        <div className={cn("font-semibold text-[12px]", isCompleted ? "text-white" : "text-slate-700")}>
+                          {reporter?.reporter_type || <span className={cn("font-normal italic", isCompleted ? "text-white/70" : "text-slate-400")}>(No Reporter)</span>}
                         </div>
                         {reporter?.country && (
-                          <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          <div className={cn("text-[11px] font-medium mt-0.5", isCompleted ? "text-white/80" : "text-slate-500")}>
                             {reporter.country}
                           </div>
                         )}
@@ -416,10 +430,10 @@ export default function WorkflowPage() {
 
                       {/* Assignment */}
                       <td className="px-4 py-3.5 align-middle">
-                        <div className="font-bold text-slate-800 text-[12px] truncate max-w-[150px]" title={c.assignee ? c.assignee.full_name : ''}>
-                          {c.assignee ? c.assignee.full_name : <span className="text-slate-400 font-normal italic">(Unassigned)</span>}
+                        <div className={cn("font-bold text-[12px] truncate max-w-[150px]", isCompleted ? "text-white" : "text-slate-800")} title={c.assignee ? c.assignee.full_name : ''}>
+                          {c.assignee ? c.assignee.full_name : <span className={cn("font-normal italic", isCompleted ? "text-white/70" : "text-slate-400")}>(Unassigned)</span>}
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5 truncate max-w-[150px]">
+                        <div className={cn("text-[11px] mt-0.5 truncate max-w-[150px]", isCompleted ? "text-white/80" : "text-slate-500")}>
                           Creator: {c.student?.full_name || 'System'}
                         </div>
                       </td>
@@ -427,7 +441,10 @@ export default function WorkflowPage() {
                       {/* Actions */}
                       <td className="px-4 py-3.5 align-middle text-center">
                         <button 
-                          className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                          className={cn(
+                            "p-1.5 rounded transition-colors cursor-pointer",
+                            isCompleted ? "text-white hover:bg-white/20" : "text-slate-400 hover:text-emerald-700 hover:bg-emerald-50"
+                          )}
                           onClick={(e) => { e.stopPropagation(); handleContextMenu(e, c); }}
                           title="Actions"
                         >

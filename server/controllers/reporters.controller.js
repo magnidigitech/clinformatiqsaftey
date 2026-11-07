@@ -1,6 +1,6 @@
 // server/controllers/reporters.controller.js - Reporter upsert
 const prisma = require('../prisma/client');
-const { validateCaseAccess } = require('../services/case.service');
+const { validateCaseAccess, assertEditable } = require('../services/case.service');
 
 /**
  * GET /api/cases/:id/reporters
@@ -27,7 +27,8 @@ async function get(req, res, next) {
 async function upsert(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const {
       first_name,

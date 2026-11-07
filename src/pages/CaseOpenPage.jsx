@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Search, RotateCcw, AlertCircle, FileText, Lock, Unlock } from 'lucide-react';
 import { useCases } from '../hooks/useCases';
 import { Button } from '../components/ui/Button';
+import { cn } from '../lib/utils';
 
 export default function CaseOpenPage() {
   const { cases } = useCases();
@@ -264,28 +265,48 @@ export default function CaseOpenPage() {
                       </td>
                     </tr>
                   ) : (
-                    displayCases.map((c, idx) => (
-                      <tr key={c.case_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4 text-center border-r border-slate-100">
-                          {c.is_locked ? 
-                            <Lock size={18} className="text-rose-500 inline" /> : 
-                            <Unlock size={18} className="text-amber-500 inline" />
-                          }
-                        </td>
-                        <td className="px-6 py-4 font-bold border-r border-slate-100">
-                          <Link to={`/cases/${c.case_id}`} className="text-brand-primary hover:underline">{c.case_number}</Link>
-                        </td>
-                        <td className="px-6 py-4 text-slate-700 font-medium border-r border-slate-100">
-                          {c.receipt_date ? new Date(c.receipt_date).toLocaleDateString() : '-'}
-                        </td>
-                        <td className="px-6 py-4 text-slate-600 border-r border-slate-100">
-                          {c.products?.map(p => p.drug_name).join(', ') || '-'}
-                        </td>
-                        <td className="px-6 py-4 text-slate-700 font-medium">
-                          {c.case_type || '-'}
-                        </td>
-                      </tr>
-                    ))
+                    displayCases.map((c, idx) => {
+                      const isCompleted = c.workflow_state === 'QC_COMPLETED';
+                      return (
+                        <tr 
+                          key={c.case_id} 
+                          className={cn(
+                            "transition-colors",
+                            isCompleted 
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white font-medium" 
+                              : "hover:bg-slate-50"
+                          )}
+                        >
+                          <td className={cn("px-6 py-4 text-center border-r", isCompleted ? "border-emerald-500/40" : "border-slate-100")}>
+                            {c.is_locked ? 
+                              <Lock size={18} className={isCompleted ? "text-white inline" : "text-rose-500 inline"} /> : 
+                              <Unlock size={18} className={isCompleted ? "text-white/60 inline" : "text-amber-500 inline"} />
+                            }
+                          </td>
+                          <td className={cn("px-6 py-4 font-bold border-r", isCompleted ? "border-emerald-500/40" : "border-slate-100")}>
+                            <Link 
+                              to={`/cases/${c.case_id}`} 
+                              className={isCompleted ? "text-white hover:text-white/90 underline font-bold" : "text-brand-primary hover:underline"}
+                            >
+                              {c.case_number}
+                            </Link>
+                          </td>
+                          <td className={cn("px-6 py-4 font-medium border-r", isCompleted ? "text-white border-emerald-500/40" : "text-slate-700 border-slate-100")}>
+                            {c.receipt_date ? new Date(c.receipt_date).toLocaleDateString() : '-'}
+                          </td>
+                          <td className={cn("px-6 py-4 border-r", isCompleted ? "text-white font-medium border-emerald-500/40" : "text-slate-600 border-slate-100")}>
+                            {c.products?.map(p => p.drug_name).join(', ') || '-'}
+                          </td>
+                          <td className={cn("px-6 py-4 font-medium", isCompleted ? "text-white" : "text-slate-700")}>
+                            {isCompleted ? (
+                              <span className="inline-flex items-center gap-1 bg-white/20 text-white border border-white/30 px-2 py-0.5 rounded text-xs font-semibold">
+                                QC Completed
+                              </span>
+                            ) : (c.case_type || '-')}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

@@ -26,7 +26,9 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [quickLaunch, setQuickLaunch] = useState('');
 
-  const assignedCases = cases?.filter(c => Number(c.assigned_to) === Number(user?.user_id)) || [];
+  const assignedCases = user?.role === 'ADMIN'
+    ? (cases || [])
+    : (cases?.filter(c => Number(c.assigned_to) === Number(user?.user_id) || Number(c.student_id) === Number(user?.user_id)) || []);
 
   const [expanded, setExpanded] = useState({
     search: true,
@@ -154,41 +156,76 @@ export default function DashboardPage() {
                       </div>
                     </td></tr>
                   ) : (
-                    assignedCases.map((c) => (
-                      <tr key={c.case_id} className="hover:bg-slate-50/80 transition-colors group">
-                        <td className="px-6 py-4">
-                          <Link to={`/cases/${c.case_id}`} className="text-brand-primary font-bold flex items-center group-hover:text-brand-dark transition-colors">
-                            <span className="h-2 w-2 rounded-full bg-emerald-400 mr-3"></span>
-                            (US) {c.case_number}
-                          </Link>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600 font-medium">{c.case_type || 'Spontaneous'}</td>
-                        <td className="px-6 py-4 text-slate-600">{c.products?.[0]?.drug_name || 'N/A'}</td>
-                        <td className="px-6 py-4 text-slate-600">
-                          <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md text-xs font-semibold">
-                            {c.workflow_state}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">
-                          {(() => {
-                            const { dueDate, phase } = getDueDate(c);
-                            const status = getDueStatus(dueDate);
-                            if (!dueDate) return <span className="text-slate-400">—</span>;
-                            return (
-                              <div className="flex flex-col gap-1">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 border rounded-md text-xs font-semibold ${getDueBadgeClasses(status)}`}>
-                                  {formatDueDate(dueDate)}
-                                </span>
-                                <span className={`text-[10px] font-bold ${status === 'overdue' ? 'text-red-600 animate-pulse' : status === 'due-today' ? 'text-orange-600' : 'text-green-600'}`}>
-                                  {getDueLabel(status)} ({phase})
-                                </span>
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">{c.events?.[0]?.entity_title || 'N/A'}</td>
-                      </tr>
-                    ))
+                    assignedCases.map((c) => {
+                      const isCompleted = c.workflow_state === 'QC_COMPLETED';
+                      return (
+                        <tr 
+                          key={c.case_id} 
+                          className={cn(
+                            "transition-colors group",
+                            isCompleted 
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white font-medium" 
+                              : "hover:bg-slate-50/80"
+                          )}
+                        >
+                          <td className="px-6 py-4">
+                            <Link 
+                              to={`/cases/${c.case_id}`} 
+                              className={cn(
+                                "font-bold flex items-center transition-colors",
+                                isCompleted 
+                                  ? "text-white hover:text-white/90" 
+                                  : "text-brand-primary group-hover:text-brand-dark"
+                              )}
+                            >
+                              <span className={cn(
+                                "h-2 w-2 rounded-full mr-3 shrink-0",
+                                isCompleted ? "bg-white shadow-sm ring-2 ring-white/50" : "bg-emerald-400"
+                              )}></span>
+                              (US) {c.case_number}
+                            </Link>
+                          </td>
+                          <td className={cn("px-6 py-4 font-medium", isCompleted ? "text-white" : "text-slate-600")}>
+                            {c.case_type || 'Spontaneous'}
+                          </td>
+                          <td className={cn("px-6 py-4 font-medium", isCompleted ? "text-white" : "text-slate-600")}>
+                            {c.products?.[0]?.drug_name || 'N/A'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2.5 py-1 rounded-md text-xs font-semibold inline-block",
+                              isCompleted 
+                                ? "bg-white/20 text-white border border-white/30" 
+                                : "bg-slate-100 text-slate-700"
+                            )}>
+                              {c.workflow_state}
+                            </span>
+                          </td>
+                          <td className={cn("px-6 py-4", isCompleted ? "text-white" : "text-slate-600")}>
+                            {isCompleted ? (
+                              <span className="text-white/60 text-xs font-semibold">—</span>
+                            ) : (() => {
+                              const { dueDate, phase } = getDueDate(c);
+                              const status = getDueStatus(dueDate);
+                              if (!dueDate) return <span className="text-slate-400">—</span>;
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 border rounded-md text-xs font-semibold ${getDueBadgeClasses(status)}`}>
+                                    {formatDueDate(dueDate)}
+                                  </span>
+                                  <span className={`text-[10px] font-bold ${status === 'overdue' ? 'text-red-600 animate-pulse' : status === 'due-today' ? 'text-orange-600' : 'text-green-600'}`}>
+                                    {getDueLabel(status)} ({phase})
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td className={cn("px-6 py-4 font-medium", isCompleted ? "text-white" : "text-slate-600")}>
+                            {c.events?.[0]?.entity_title || 'N/A'}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

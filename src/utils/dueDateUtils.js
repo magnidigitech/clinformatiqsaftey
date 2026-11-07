@@ -19,7 +19,7 @@ export function getDueDate(caseData) {
   const state = caseData.workflow_state;
 
   // Completed/closed cases have no due date
-  if (state === 'APPROVED' || state === 'CLOSED' || state === 'COMPLETED') {
+  if (state === 'APPROVED' || state === 'CLOSED' || state === 'COMPLETED' || state === 'QC_COMPLETED') {
     return { dueDate: null, phase: null };
   }
 

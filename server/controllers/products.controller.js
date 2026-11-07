@@ -1,6 +1,6 @@
 // server/controllers/products.controller.js – Product/Drug CRUD
 const prisma = require('../prisma/client');
-const { validateCaseAccess } = require('../services/case.service');
+const { validateCaseAccess, assertEditable } = require('../services/case.service');
 
 /**
  * GET /api/cases/:id/products
@@ -28,7 +28,8 @@ async function list(req, res, next) {
 async function create(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const {
       drug_name, dose, dose_unit, route, frequency,
@@ -74,7 +75,8 @@ async function update(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const productId = parseInt(req.params.productId, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     // Verify product belongs to case
     const existing = await prisma.sptOrgProduct.findFirst({
@@ -125,7 +127,8 @@ async function remove(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const productId = parseInt(req.params.productId, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const existing = await prisma.sptOrgProduct.findFirst({
       where: { product_id: productId, case_id: caseId },

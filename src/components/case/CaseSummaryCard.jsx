@@ -9,6 +9,7 @@ const STATUS_STYLES = {
   UNDER_REVIEW: { bg: 'bg-status-review-bg', text: 'text-status-review-text', label: 'Under Review' },
   ACCEPTED: { bg: 'bg-status-accepted-bg', text: 'text-status-accepted-text', label: 'Accepted' },
   NEEDS_REVISION: { bg: 'bg-status-revision-bg', text: 'text-status-revision-text', label: 'Needs Revision' },
+  QC_COMPLETED: { bg: 'bg-emerald-600', text: 'text-white', label: 'QC Completed' },
 };
 
 function StatusBadge({ status }) {

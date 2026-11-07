@@ -3,6 +3,7 @@ import { Users, FileText, Activity, CheckCircle, Clock, Lock, Unlock, RefreshCcw
 import { getAnalytics } from '../services/adminService';
 import api from '../services/api';
 import { Link } from 'react-router-dom';
+import { cn } from '../lib/utils';
 import * as Tabs from '@radix-ui/react-tabs';
 import { 
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
@@ -311,16 +312,24 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {cases.length > 0 ? cases.map((c) => (
-                      <tr key={c.case_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4 font-medium text-brand-primary">
-                          <Link to={`/cases/${c.case_id}`} className="hover:underline">{c.case_number}</Link>
+                    {cases.length > 0 ? cases.map((c) => {
+                      const isCompleted = c.workflow_state === 'QC_COMPLETED';
+                      return (
+                      <tr key={c.case_id} className={cn(
+                        "transition-colors",
+                        isCompleted ? "bg-emerald-600 hover:bg-emerald-700 text-white font-medium" : "hover:bg-slate-50"
+                      )}>
+                        <td className="px-6 py-4 font-medium">
+                          <Link to={`/cases/${c.case_id}`} className={cn("hover:underline font-bold", isCompleted ? "text-white" : "text-brand-primary")}>
+                            {c.case_number}
+                          </Link>
                         </td>
-                        <td className="px-6 py-4 text-slate-600">
+                        <td className={cn("px-6 py-4", isCompleted ? "text-white" : "text-slate-600")}>
                           {c.patient?.patient_code || 'N/A'}
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            isCompleted ? 'bg-white/20 text-white border border-white/30' :
                             c.workflow_state === 'CLOSED' ? 'bg-slate-100 text-slate-800' :
                             c.workflow_state === 'SUBMITTED' ? 'bg-blue-100 text-blue-800' :
                             c.workflow_state === 'PENDING_QC' ? 'bg-purple-100 text-purple-800' :
@@ -329,44 +338,44 @@ export default function AdminPage() {
                             {c.workflow_state}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-slate-600">
+                        <td className={cn("px-6 py-4", isCompleted ? "text-white" : "text-slate-600")}>
                           {c.locked_by ? (
-                            <span className="flex items-center gap-1 text-amber-600 font-medium">
+                            <span className={cn("flex items-center gap-1 font-medium", isCompleted ? "text-white" : "text-amber-600")}>
                               <Lock size={14} /> {c.locked_by}
                             </span>
-                          ) : <span className="text-slate-400">-</span>}
+                          ) : <span className={isCompleted ? "text-white/60" : "text-slate-400"}>-</span>}
                         </td>
-                        <td className="px-6 py-4 text-slate-600">
+                        <td className={cn("px-6 py-4", isCompleted ? "text-white" : "text-slate-600")}>
                           {c.assignee ? (
                             c.workflow_logs?.find(l => l.comments?.toLowerCase().includes('rout') || l.to_state === 'PENDING_QC')?.user?.full_name || 
                             (c.student_id === c.assignee.user_id ? 'Self' : 'System')
                           ) : '-'}
                         </td>
-                        <td className="px-6 py-4 text-slate-600">
+                        <td className={cn("px-6 py-4", isCompleted ? "text-white" : "text-slate-600")}>
                           {c.assignee?.full_name || '-'}
                         </td>
-                        <td className="px-6 py-4 text-slate-600">
-                          {c.workflow_state === 'CLOSED' ? 
-                            (c.workflow_logs?.find(l => l.to_state === 'CLOSED')?.user?.full_name || 'System') 
+                        <td className={cn("px-6 py-4", isCompleted ? "text-white" : "text-slate-600")}>
+                          {c.workflow_state === 'CLOSED' || isCompleted ? 
+                            (c.workflow_logs?.find(l => l.to_state === 'QC_COMPLETED' || l.to_state === 'CLOSED')?.user?.full_name || 'System') 
                             : '-'}
                         </td>
                         <td className="px-6 py-4 text-right space-x-2">
-                          <Link to={`/cases/${c.case_id}`} className="inline-flex items-center justify-center p-2 text-brand-primary hover:bg-blue-50 rounded-md transition-colors" title="View/Edit">
+                          <Link to={`/cases/${c.case_id}`} className={cn("inline-flex items-center justify-center p-2 rounded-md transition-colors", isCompleted ? "text-white hover:bg-emerald-800" : "text-brand-primary hover:bg-blue-50")} title="View/Edit">
                             <Eye size={18} />
                           </Link>
                           {c.locked_by && (
-                            <button onClick={() => handleUnlock(c.case_id)} className="inline-flex items-center justify-center p-2 text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Unlock">
+                            <button onClick={() => handleUnlock(c.case_id)} className={cn("inline-flex items-center justify-center p-2 rounded-md transition-colors", isCompleted ? "text-white hover:bg-emerald-800" : "text-amber-600 hover:bg-amber-50")} title="Unlock">
                               <Unlock size={18} />
                             </button>
                           )}
-                          {c.workflow_state === 'CLOSED' && (
-                            <button onClick={() => handleReopen(c.case_id)} className="inline-flex items-center justify-center p-2 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors" title="Reopen Case">
+                          {(c.workflow_state === 'CLOSED' || isCompleted) && (
+                            <button onClick={() => handleReopen(c.case_id)} className={cn("inline-flex items-center justify-center p-2 rounded-md transition-colors", isCompleted ? "text-white hover:bg-emerald-800" : "text-emerald-600 hover:bg-emerald-50")} title="Reopen Case">
                               <RefreshCcw size={18} />
                             </button>
                           )}
                         </td>
                       </tr>
-                    )) : (
+                    );}) : (
                       <tr>
                         <td colSpan="8" className="px-6 py-8 text-center text-slate-500">
                           <Clock size={32} className="text-slate-300 mx-auto mb-2" />

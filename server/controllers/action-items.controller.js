@@ -1,6 +1,6 @@
 // server/controllers/action-items.controller.js - Action Items CRUD
 const prisma = require('../prisma/client');
-const { validateCaseAccess } = require('../services/case.service');
+const { validateCaseAccess, assertEditable } = require('../services/case.service');
 
 async function list(req, res, next) {
   try {
@@ -21,7 +21,8 @@ async function list(req, res, next) {
 async function create(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const { action_type, description, due_date, status, assigned_to } = req.body;
 
@@ -46,7 +47,8 @@ async function update(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const actionId = parseInt(req.params.actionId, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const existing = await prisma.caseActionItem.findFirst({
       where: { action_id: actionId, case_id: caseId },
@@ -82,7 +84,8 @@ async function remove(req, res, next) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const actionId = parseInt(req.params.actionId, 10);
-    await validateCaseAccess(caseId, req.user);
+    const caseRecord = await validateCaseAccess(caseId, req.user);
+    assertEditable(caseRecord, req.user);
 
     const existing = await prisma.caseActionItem.findFirst({
       where: { action_id: actionId, case_id: caseId },

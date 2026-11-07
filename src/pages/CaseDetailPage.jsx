@@ -9,6 +9,7 @@ import { stripHtml } from '../utils/icdApi';
 import { generateCiomsPdf, generateAdrPdf } from '../lib/pdf-generator';
 import { getDueDate, getDueStatus, formatDueDate, getDueBadgeClasses, getDueLabel } from '../utils/dueDateUtils';
 import { COUNTRIES } from '../constants/countries';
+import { Check, CheckCircle, CheckCircle2, RotateCw, WifiOff, AlertTriangle, ShieldAlert } from 'lucide-react';
 
 const HUMAN_READABLE_TABLES = {
   'spt_org_cases': 'Case General',
@@ -126,10 +127,18 @@ export default function CaseDetailPage() {
   const { user } = useAuth();
 
   const [caseData, setCaseData] = useState(null);
-  const isReadOnly = caseData && user?.role !== 'ADMIN' ? ((caseData.locked_by != null && caseData.locked_by !== user?.username) || (caseData.assigned_to ? caseData.assigned_to !== user?.user_id : caseData.student_id !== user?.user_id)) : false;
+  const isQcCompleted = caseData?.workflow_state === 'QC_COMPLETED';
+  const isReadOnly = isQcCompleted || (caseData && user?.role !== 'ADMIN' ? ((caseData.locked_by != null && caseData.locked_by !== user?.username) || (caseData.assigned_to ? caseData.assigned_to !== user?.user_id : caseData.student_id !== user?.user_id)) : false);
 
   const [loading, setLoading] = useState(true);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saving' | 'saved' | 'offline_pending' | 'retry_failed'
+
+  const isDirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
+  const saveSeqRef = useRef(0);
+  const pendingNextSaveRef = useRef(false);
+  const retryTimerRef = useRef(null);
 
   // Tabs state
   const [activeTab, setActiveTab] = useState(() => {
@@ -562,18 +571,21 @@ export default function CaseDetailPage() {
   const handleAddContact = () => {
     const today = new Date().toISOString().split('T')[0];
     const newContact = { id: Date.now(), date: today, dateSent: today, code: '', description: '', group: '', user: '' };
+    isDirtyRef.current = true;
     setContacts(prev => [...prev, newContact]);
     setSelectedContactId(newContact.id);
   };
 
   const handleDeleteContact = () => {
     if (selectedContactId) {
+      isDirtyRef.current = true;
       setContacts(prev => prev.filter(c => c.id !== selectedContactId));
       setSelectedContactId(null);
     }
   };
 
   const updateContact = (id, field, value) => {
+    isDirtyRef.current = true;
     setContacts(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
@@ -584,18 +596,21 @@ export default function CaseDetailPage() {
   const handleAddActionItem = () => {
     const today = new Date().toISOString().split('T')[0];
     const newItem = { id: Date.now(), dateOpen: today, dateDue: today, dateCompleted: '', code: '', description: '', group: '', user: '' };
+    isDirtyRef.current = true;
     setActionItems(prev => [...prev, newItem]);
     setSelectedActionItemId(newItem.id);
   };
 
   const handleDeleteActionItem = () => {
     if (selectedActionItemId) {
+      isDirtyRef.current = true;
       setActionItems(prev => prev.filter(i => i.id !== selectedActionItemId));
       setSelectedActionItemId(null);
     }
   };
 
   const updateActionItem = (id, field, value) => {
+    isDirtyRef.current = true;
     setActionItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i));
   };
 
@@ -648,7 +663,6 @@ export default function CaseDetailPage() {
 
   const isQcState = caseData?.workflow_state === 'PENDING_QC' || caseData?.workflow_state === 'QC';
   const isDataEntryState = !caseData?.workflow_state || caseData?.workflow_state === 'DRAFT';
-  const isQcCompleted = caseData?.workflow_state === 'QC_COMPLETED';
 
   const caseCreator = caseData?.student || null;
   const caseCreatorName = caseCreator?.full_name || caseCreator?.username || 'Original Creator';
@@ -884,50 +898,89 @@ export default function CaseDetailPage() {
         setReferences([]);
       }
 
-      // Hydrate core form fields
+      // Check for pending offline save in localStorage
+      let offlinePendingForm = null;
+      try {
+        const pendingSavedStr = localStorage.getItem(`pending_case_save_${id}`);
+        if (pendingSavedStr) {
+          const parsedOffline = JSON.parse(pendingSavedStr);
+          if (parsedOffline && parsedOffline.form) {
+            offlinePendingForm = parsedOffline.form;
+            setSaveStatus('offline_pending');
+          }
+        }
+      } catch (e) {}
+
+      // Hydrate all form fields preserving every single entry
       setForm(prev => {
         const p = data.patient || {};
+        const fd = parsedAnalysis.formData || parsedAnalysis.form || {};
+        const st = parsedAnalysis.study || {};
+        const lit = parsedAnalysis.literature || {};
+
         return {
           ...prev,
-          caseReceiptDate: data.receipt_date ? new Date(data.receipt_date).toISOString().split('T')[0] : prev.caseReceiptDate,
-          safetyReceiptDate: data.aware_date ? new Date(data.aware_date).toISOString().split('T')[0] : prev.safetyReceiptDate,
-          caseCountry: data.case_country || data.reporters?.[0]?.country || prev.caseCountry,
-          caseReportType: data.case_type || prev.caseReportType,
-          caseSerious: data.serious_flag === 'Y' ? 'Yes' : 'No',
+          ...fd,
+          ...(offlinePendingForm || {}),
+          // General
+          caseReceiptDate: data.receipt_date ? new Date(data.receipt_date).toISOString().split('T')[0] : (fd.caseReceiptDate || prev.caseReceiptDate),
+          safetyReceiptDate: data.aware_date ? new Date(data.aware_date).toISOString().split('T')[0] : (fd.safetyReceiptDate || prev.safetyReceiptDate),
+          caseCountry: data.case_country || data.reporters?.[0]?.country || fd.caseCountry || prev.caseCountry,
+          caseReportType: data.case_type || fd.caseReportType || prev.caseReportType,
+          caseSerious: data.serious_flag === 'Y' ? 'Yes' : (data.serious_flag === 'N' ? 'No' : (fd.caseSerious || prev.caseSerious)),
+          // Study fields
+          projectId: fd.projectId || st.projectId || prev.projectId || '',
+          studyId: fd.studyId || st.studyId || prev.studyId || '',
+          centerId: fd.centerId || st.centerId || prev.centerId || '',
+          studyPhase: fd.studyPhase || st.studyPhase || prev.studyPhase || '',
+          studyName: fd.studyName || st.studyName || prev.studyName || '',
+          otherId: fd.otherId || st.otherId || prev.otherId || '',
+          studyType: fd.studyType || st.studyType || prev.studyType || '',
+          blindingStatus: fd.blindingStatus || st.blindingStatus || prev.blindingStatus || '',
+          studyDescription: fd.studyDescription || st.studyDescription || prev.studyDescription || '',
+          unblindingDate: fd.unblindingDate || st.unblindingDate || prev.unblindingDate || '',
+          weekNum: fd.weekNum || st.weekNum || prev.weekNum || '',
+          visitNum: fd.visitNum || st.visitNum || prev.visitNum || '',
+          observeStudyType: fd.observeStudyType || st.observeStudyType || prev.observeStudyType || '',
+          // Literature fields
+          litId: fd.litId || lit.litId || prev.litId || '',
+          litKeywords: fd.litKeywords || lit.litKeywords || prev.litKeywords || '',
+          litJournal: fd.litJournal || lit.litJournal || prev.litJournal || '',
+          litTitle: fd.litTitle || lit.litTitle || prev.litTitle || '',
           // Analysis & Summary fields
-          caseNarrative: data.case_narrative || parsedAnalysis.caseNarrative || prev.caseNarrative || '',
-          caseComment: parsedAnalysis.caseComment || prev.caseComment || '',
-          localEvaluator: parsedAnalysis.localEvaluator || prev.localEvaluator || '',
-          localEvaluatorComment: parsedAnalysis.localEvaluatorComment || prev.localEvaluatorComment || '',
-          companyComment: parsedAnalysis.companyComment || prev.companyComment || '',
-          evaluationSimilarEvents: parsedAnalysis.evaluationSimilarEvents || prev.evaluationSimilarEvents || '',
-          caseSeriousSummary: parsedAnalysis.caseSeriousSummary || (data.serious_flag === 'Y' ? 'Yes' : (data.serious_flag === 'N' ? 'No' : '')) || prev.caseSeriousSummary || '',
-          caseSeriousNotes: parsedAnalysis.caseSeriousNotes || prev.caseSeriousNotes || '',
-          companyAgentCausal: parsedAnalysis.companyAgentCausal || prev.companyAgentCausal || '',
-          companyAgentCausalNotes: parsedAnalysis.companyAgentCausalNotes || prev.companyAgentCausalNotes || '',
-          listednessDetermination: parsedAnalysis.listednessDetermination || prev.listednessDetermination || '',
-          listednessDeterminationNotes: parsedAnalysis.listednessDeterminationNotes || prev.listednessDeterminationNotes || '',
-          caseOutcome: parsedAnalysis.caseOutcome || prev.caseOutcome || '',
-          caseOutcomeNotes: parsedAnalysis.caseOutcomeNotes || prev.caseOutcomeNotes || '',
-          companyDiagnosisNotes: parsedAnalysis.companyDiagnosisNotes || prev.companyDiagnosisNotes || '',
+          caseNarrative: data.case_narrative || parsedAnalysis.caseNarrative || fd.caseNarrative || prev.caseNarrative || '',
+          caseComment: parsedAnalysis.caseComment || fd.caseComment || prev.caseComment || '',
+          localEvaluator: parsedAnalysis.localEvaluator || fd.localEvaluator || prev.localEvaluator || '',
+          localEvaluatorComment: parsedAnalysis.localEvaluatorComment || fd.localEvaluatorComment || prev.localEvaluatorComment || '',
+          companyComment: parsedAnalysis.companyComment || fd.companyComment || prev.companyComment || '',
+          evaluationSimilarEvents: parsedAnalysis.evaluationSimilarEvents || fd.evaluationSimilarEvents || prev.evaluationSimilarEvents || '',
+          caseSeriousSummary: parsedAnalysis.caseSeriousSummary || (data.serious_flag === 'Y' ? 'Yes' : (data.serious_flag === 'N' ? 'No' : '')) || fd.caseSeriousSummary || prev.caseSeriousSummary || '',
+          caseSeriousNotes: parsedAnalysis.caseSeriousNotes || fd.caseSeriousNotes || prev.caseSeriousNotes || '',
+          companyAgentCausal: parsedAnalysis.companyAgentCausal || fd.companyAgentCausal || prev.companyAgentCausal || '',
+          companyAgentCausalNotes: parsedAnalysis.companyAgentCausalNotes || fd.companyAgentCausalNotes || prev.companyAgentCausalNotes || '',
+          listednessDetermination: parsedAnalysis.listednessDetermination || fd.listednessDetermination || prev.listednessDetermination || '',
+          listednessDeterminationNotes: parsedAnalysis.listednessDeterminationNotes || fd.listednessDeterminationNotes || prev.listednessDeterminationNotes || '',
+          caseOutcome: parsedAnalysis.caseOutcome || fd.caseOutcome || prev.caseOutcome || '',
+          caseOutcomeNotes: parsedAnalysis.caseOutcomeNotes || fd.caseOutcomeNotes || prev.caseOutcomeNotes || '',
+          companyDiagnosisNotes: parsedAnalysis.companyDiagnosisNotes || fd.companyDiagnosisNotes || prev.companyDiagnosisNotes || '',
           // Case Lock / Archive
           caseLockStatus: parsedAnalysis.caseLockStatus || (data.locked_by ? 'Locked' : 'Unlocked') || prev.caseLockStatus || 'Unlocked',
           closureDate: parsedAnalysis.closureDate || (data.closure_date ? new Date(data.closure_date).toISOString().split('T')[0] : '') || prev.closureDate || '',
           lockedOrClosedBy: parsedAnalysis.lockedOrClosedBy || data.locked_by || prev.lockedOrClosedBy || '',
           caseLockNotes: parsedAnalysis.caseLockNotes || prev.caseLockNotes || '',
           // Patient
-          patFirstName: p.first_name || (p.patient_code ? p.patient_code.split(' ')[0] : '') || prev.patFirstName,
-          patLastName: p.last_name || (p.patient_code && p.patient_code.includes(' ') ? p.patient_code.split(' ').slice(1).join(' ') : '') || prev.patLastName,
-          patInitials: p.patient_code || prev.patInitials,
-          patDob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : prev.patDob,
-          patAge: p.age_value ? String(p.age_value) : prev.patAge,
-          patAgeUnits: p.age_unit || prev.patAgeUnits || 'Years',
-          patGender: p.sex || prev.patGender || 'Male',
-          patWeight: p.weight_kg ? String(p.weight_kg) : prev.patWeight,
-          patWeightUnits: prev.patWeightUnits || 'kg',
-          patHeight: p.height_cm ? String(p.height_cm) : prev.patHeight,
-          patHeightUnits: prev.patHeightUnits || 'cm',
-          patEthnicity: p.ethnicity || prev.patEthnicity,
+          patFirstName: p.first_name || (p.patient_code ? p.patient_code.split(' ')[0] : '') || fd.patFirstName || prev.patFirstName,
+          patLastName: p.last_name || (p.patient_code && p.patient_code.includes(' ') ? p.patient_code.split(' ').slice(1).join(' ') : '') || fd.patLastName || prev.patLastName,
+          patInitials: p.patient_code || fd.patInitials || prev.patInitials,
+          patDob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : (fd.patDob || prev.patDob),
+          patAge: p.age_value ? String(p.age_value) : (fd.patAge || prev.patAge),
+          patAgeUnits: p.age_unit || fd.patAgeUnits || prev.patAgeUnits || 'Years',
+          patGender: p.sex || fd.patGender || prev.patGender || 'Male',
+          patWeight: p.weight_kg ? String(p.weight_kg) : (fd.patWeight || prev.patWeight),
+          patWeightUnits: fd.patWeightUnits || prev.patWeightUnits || 'kg',
+          patHeight: p.height_cm ? String(p.height_cm) : (fd.patHeight || prev.patHeight),
+          patHeightUnits: fd.patHeightUnits || prev.patHeightUnits || 'cm',
+          patEthnicity: p.ethnicity || fd.patEthnicity || prev.patEthnicity,
         };
       });
 
@@ -1250,12 +1303,19 @@ export default function CaseDetailPage() {
     });
   }, [id]);
 
-  const h = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.value }));
-  const hc = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.checked }));
+  const h = (field) => (e) => {
+    isDirtyRef.current = true;
+    setForm(p => ({ ...p, [field]: e.target.value }));
+  };
+  const hc = (field) => (e) => {
+    isDirtyRef.current = true;
+    setForm(p => ({ ...p, [field]: e.target.checked }));
+  };
 
   // Case Classifications State
   const [selectedClasses, setSelectedClasses] = useState([]);
   const handleAddClassification = () => {
+    isDirtyRef.current = true;
     setForm(p => ({
       ...p,
       caseClassifications: [...(p.caseClassifications || []), { id: Date.now(), text: '' }]
@@ -1266,6 +1326,7 @@ export default function CaseDetailPage() {
       alert("Please select at least one classification to delete.");
       return;
     }
+    isDirtyRef.current = true;
     setForm(p => ({
       ...p,
       caseClassifications: (p.caseClassifications || []).filter(c => !selectedClasses.includes(c.id))
@@ -1297,6 +1358,7 @@ export default function CaseDetailPage() {
   const addFollowUpRow = (isSignificant) => {
     const newId = Date.now();
     const today = new Date().toISOString().split('T')[0];
+    isDirtyRef.current = true;
     setForm(p => ({
       ...p,
       followUps: [...(p.followUps || []), {
@@ -1316,6 +1378,7 @@ export default function CaseDetailPage() {
       alert("Please select at least one follow-up to delete.");
       return;
     }
+    isDirtyRef.current = true;
     setForm(p => ({
       ...p,
       followUps: (p.followUps || []).filter(f => !selectedFollowUps.includes(f.id))
@@ -1324,14 +1387,11 @@ export default function CaseDetailPage() {
   };
 
   const updateFollowUp = (id, field, value) => {
-    setForm(p => {
-      const newFollowUps = [...(p.followUps || [])];
-      const index = newFollowUps.findIndex(f => f.id === id);
-      if (index !== -1) {
-        newFollowUps[index] = { ...newFollowUps[index], [field]: value };
-      }
-      return { ...p, followUps: newFollowUps };
-    });
+    isDirtyRef.current = true;
+    setForm(p => ({
+      ...p,
+      followUps: (p.followUps || []).map(f => f.id === id ? { ...f, [field]: value } : f)
+    }));
   };
 
   const handlePatGenderChange = (e) => {
@@ -1854,13 +1914,44 @@ export default function CaseDetailPage() {
   }, [form.patAge, form.patAgeUnits]);
 
   useEffect(() => {
-    const handleSave = async () => {
-      if (isReadOnly) {
-        alert("This case is read-only. You do not have permission to edit it.");
+    const handleSave = async (isAutoSave = false) => {
+      if (isReadOnly || isQcCompleted) {
+        if (!isAutoSave) {
+          alert("This case has completed QC and is read-only. Editing is disabled.");
+        }
         return;
       }
       if (!id) return;
+
+      // Handle offline save
+      if (!navigator.onLine) {
+        try {
+          const offlineData = {
+            form,
+            productTabs,
+            eventTabs,
+            reporterTabs,
+            actionItems,
+            attachments,
+            references,
+            timestamp: Date.now()
+          };
+          localStorage.setItem(`pending_case_save_${id}`, JSON.stringify(offlineData));
+        } catch (e) {}
+        setSaveStatus('offline_pending');
+        return;
+      }
+
+      if (isSavingRef.current) {
+        pendingNextSaveRef.current = true;
+        return;
+      }
+
+      isSavingRef.current = true;
+      const currentSeq = ++saveSeqRef.current;
+      setSaveStatus('saving');
       setIsSaving(true);
+
       try {
         const syncedProductTabs = productTabs.map(p => {
           if (p.id === activeProductTab) {
@@ -1875,6 +1966,22 @@ export default function CaseDetailPage() {
         });
 
         const analysisDataObj = {
+          formData: form, // Preserve entire form state
+          study: {
+            projectId: form.projectId || '',
+            studyId: form.studyId || '',
+            centerId: form.centerId || '',
+            studyPhase: form.studyPhase || '',
+            studyName: form.studyName || '',
+            studyType: form.studyType || '',
+            studyDescription: form.studyDescription || '',
+          },
+          literature: {
+            litId: form.litId || '',
+            litKeywords: form.litKeywords || '',
+            litJournal: form.litJournal || '',
+            litTitle: form.litTitle || '',
+          },
           caseNarrative: form.caseNarrative || '',
           caseComment: form.caseComment || '',
           localEvaluator: form.localEvaluator || '',
@@ -1920,6 +2027,7 @@ export default function CaseDetailPage() {
             serious_flag: (form.caseSerious === 'Yes' || form.caseSeriousSummary === 'Yes') ? 'Y' : 'N',
             case_narrative: form.caseNarrative || '',
             analysis_data: JSON.stringify(analysisDataObj),
+            formData: form,
             attachments: attachments || [],
             references: references || [],
             patient_history_data: JSON.stringify(patientHistories),
@@ -2106,12 +2214,61 @@ export default function CaseDetailPage() {
 
         await Promise.all(actionPromises);
 
+        // Sequence check: only update if this is the latest save request
+        if (saveSeqRef.current === currentSeq) {
+          isDirtyRef.current = false;
+          setSaveStatus('saved');
+          try {
+            localStorage.removeItem(`pending_case_save_${id}`);
+          } catch (e) {}
+        }
+
         setIsSaving(false);
-        window.dispatchEvent(new CustomEvent('save_success'));
+        if (!isAutoSave) {
+          window.dispatchEvent(new CustomEvent('save_success'));
+        }
       } catch (err) {
         console.error("Save error:", err);
         setIsSaving(false);
-        alert("Error saving case to database: " + (err.response?.data?.message || err.message));
+        
+        // Handle network error / offline
+        if (!navigator.onLine || !err.response || err.code === 'ERR_NETWORK') {
+          setSaveStatus('offline_pending');
+          try {
+            const offlineData = {
+              form,
+              productTabs,
+              eventTabs,
+              reporterTabs,
+              actionItems,
+              attachments,
+              references,
+              timestamp: Date.now()
+            };
+            localStorage.setItem(`pending_case_save_${id}`, JSON.stringify(offlineData));
+          } catch (e) {}
+        } else {
+          setSaveStatus('retry_failed');
+          // Automatically retry in 10 seconds
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = setTimeout(() => {
+            if (handleSaveRef.current) {
+              handleSaveRef.current(true);
+            }
+          }, 10000);
+        }
+
+        if (!isAutoSave) {
+          alert("Error saving case to database: " + (err.response?.data?.message || err.message));
+        }
+      } finally {
+        isSavingRef.current = false;
+        if (pendingNextSaveRef.current) {
+          pendingNextSaveRef.current = false;
+          if (handleSaveRef.current) {
+            handleSaveRef.current(true);
+          }
+        }
       }
     };
 
@@ -2238,7 +2395,90 @@ export default function CaseDetailPage() {
       window.removeEventListener('route_case', handleRouteCase);
       window.removeEventListener('lock_case', handleLockCase);
     };
-  }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, routingComments, patientHistories, labTests, labDates, labResults, isReadOnly, caseData, user, productIndications, dosageTabs, activeProductTab, activeDosageTab]);
+  }, [id, form, reporterTabs, productTabs, eventTabs, actionItems, references, contacts, routingComments, patientHistories, labTests, labDates, labResults, isReadOnly, isQcCompleted, caseData, user, productIndications, dosageTabs, activeProductTab, activeDosageTab]);
+
+  // Automatic saving every 60 seconds
+  useEffect(() => {
+    if (isReadOnly || isQcCompleted || !id) return;
+
+    const intervalId = setInterval(() => {
+      if (isDirtyRef.current && !isSavingRef.current && !isReadOnly && !isQcCompleted) {
+        if (handleSaveRef.current) {
+          handleSaveRef.current(true);
+        }
+      }
+    }, 60000);
+
+    return () => clearInterval(intervalId);
+  }, [id, isReadOnly, isQcCompleted]);
+
+  // Online / Offline synchronization
+  useEffect(() => {
+    const handleOnline = () => {
+      const pending = localStorage.getItem(`pending_case_save_${id}`);
+      if (pending || isDirtyRef.current) {
+        if (handleSaveRef.current && !isReadOnly && !isQcCompleted) {
+          handleSaveRef.current(true);
+        }
+      } else {
+        setSaveStatus('saved');
+      }
+    };
+
+    const handleOffline = () => {
+      if (isDirtyRef.current) {
+        setSaveStatus('offline_pending');
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [id, isReadOnly, isQcCompleted]);
+
+  // Save on navigation or beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isDirtyRef.current && !isReadOnly && !isQcCompleted && id) {
+        try {
+          const offlineData = {
+            form,
+            productTabs,
+            eventTabs,
+            reporterTabs,
+            actionItems,
+            timestamp: Date.now()
+          };
+          localStorage.setItem(`pending_case_save_${id}`, JSON.stringify(offlineData));
+        } catch (e) {}
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (isDirtyRef.current && !isReadOnly && !isQcCompleted && id) {
+        try {
+          const offlineData = {
+            form,
+            productTabs,
+            eventTabs,
+            reporterTabs,
+            actionItems,
+            timestamp: Date.now()
+          };
+          localStorage.setItem(`pending_case_save_${id}`, JSON.stringify(offlineData));
+        } catch (e) {}
+        if (handleSaveRef.current) {
+          handleSaveRef.current(true);
+        }
+      }
+    };
+  }, [id, form, productTabs, eventTabs, reporterTabs, actionItems, isReadOnly, isQcCompleted]);
 
   useEffect(() => {
     return () => {
@@ -2418,15 +2658,45 @@ export default function CaseDetailPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            {/* Save Status Indicator */}
+            {!isQcCompleted && (
+              <div className="mr-1">
+                {saveStatus === 'saving' && (
+                  <span className="flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-md text-xs font-semibold animate-pulse shadow-2xs">
+                    <RotateCw size={12} className="animate-spin" /> Saving...
+                  </span>
+                )}
+                {saveStatus === 'saved' && (
+                  <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-md text-xs font-semibold shadow-2xs">
+                    <Check size={12} /> All changes saved
+                  </span>
+                )}
+                {saveStatus === 'offline_pending' && (
+                  <span className="flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-md text-xs font-semibold shadow-2xs">
+                    <WifiOff size={12} /> Offline – changes pending
+                  </span>
+                )}
+                {saveStatus === 'retry_failed' && (
+                  <span className="flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-300 px-2.5 py-1 rounded-md text-xs font-semibold animate-pulse shadow-2xs">
+                    <AlertTriangle size={12} /> Save failed – retrying
+                  </span>
+                )}
+              </div>
+            )}
+
             {caseData?.student && (
-              <span className="ml-2 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+              <span className="ml-1 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
                 Creator: {caseData.student.full_name}
               </span>
             )}
-            <span className="ml-2">Case Status :</span>
-            <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md">
-              <span className="text-gray-500">📋</span> {getDisplayStatus(caseData?.workflow_state)}
-              {hasValidationWarning && (
+            <span className="ml-1">Case Status :</span>
+            <span className={cn(
+              "flex items-center gap-1.5 px-2 py-1 rounded-md border",
+              isQcCompleted ? "bg-emerald-600 text-white border-emerald-700 font-bold shadow-2xs" : "bg-emerald-50 border-emerald-200"
+            )}>
+              {isQcCompleted ? <CheckCircle2 size={13} className="text-white" /> : <span className="text-gray-500">📋</span>}
+              <span>{getDisplayStatus(caseData?.workflow_state)}</span>
+              {hasValidationWarning && !isQcCompleted && (
                 <div
                   className="w-2.5 h-2.5 bg-orange-400 border border-orange-500 cursor-pointer ml-1.5 rounded-full shadow-sm animate-pulse"
                   onDoubleClick={() => setShowValidationModal(true)}
@@ -2435,6 +2705,7 @@ export default function CaseDetailPage() {
               )}
             </span>
             {(() => {
+              if (isQcCompleted) return null; // Strictly no due date visibility for completed cases
               const { dueDate, phase } = getDueDate(caseData);
               const status = getDueStatus(dueDate);
               if (!dueDate) return null;
@@ -2450,6 +2721,19 @@ export default function CaseDetailPage() {
             })()}
           </div>
         </div>
+
+        {/* Informational Read-Only Banner for QC Completed Cases */}
+        {isQcCompleted && (
+          <div className="bg-emerald-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-sm border-b border-emerald-700">
+            <div className="flex items-center gap-2">
+              <CheckCircle size={16} className="text-white shrink-0" />
+              <span>This case has completed the QC workflow and is in Read-Only View Mode. All data is preserved and protected from changes.</span>
+            </div>
+            <span className="uppercase text-[10px] tracking-wider bg-white/20 px-2 py-0.5 rounded border border-white/30 font-bold">
+              QC Completed • Read Only
+            </span>
+          </div>
+        )}
 
         {/* ===== Form Tabs ===== */}
         <div className="flex items-end px-4 pt-1.5 bg-white border-b border-slate-200 relative z-0">
@@ -2503,27 +2787,31 @@ export default function CaseDetailPage() {
               >
                 <span>{tab.name || '(Empty)'}</span>
                 {tab.isDR && <span className="bg-white border border-gray-400 px-0.5 text-[8px] text-amber-600">DR</span>}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteProductTab(tab.id);
-                  }}
-                  className={cn(
-                    "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
-                    activeProductTab === tab.id ? "text-black" : "text-gray-500"
-                  )}
-                  title="Delete Tab"
-                >
-                  ✕
-                </button>
+                {!isReadOnly && !isQcCompleted && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteProductTab(tab.id);
+                    }}
+                    className={cn(
+                      "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
+                      activeProductTab === tab.id ? "text-black" : "text-gray-500"
+                    )}
+                    title="Delete Tab"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
             ))}
-            <div
-              onClick={handleAddNewProductTab}
-              className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 rounded-t-sm cursor-pointer hover:bg-gray-100"
-            >
-              (New)
-            </div>
+            {!isReadOnly && !isQcCompleted && (
+              <div
+                onClick={handleAddNewProductTab}
+                className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 rounded-t-sm cursor-pointer hover:bg-gray-100"
+              >
+                (New)
+              </div>
+            )}
             <div className="ml-auto flex gap-1">
               <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
               <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&gt;</button>
@@ -4010,63 +4298,68 @@ export default function CaseDetailPage() {
                         )}
                       >
                         <span>{tab.name || '(Empty)'}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteEventTab(tab.id);
-                          }}
-                          className={cn(
-                            "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
-                            activeEventTab === tab.id ? "text-black" : "text-gray-500"
-                          )}
-                          title="Delete Tab"
-                        >
-                          ✕
-                        </button>
+                        {!isReadOnly && !isQcCompleted && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteEventTab(tab.id);
+                            }}
+                            className={cn(
+                              "ml-1 w-3 h-3 flex items-center justify-center rounded-sm hover:bg-black/10 transition-colors",
+                              activeEventTab === tab.id ? "text-black" : "text-gray-500"
+                            )}
+                            title="Delete Tab"
+                          >
+                            ✕
+                          </button>
+                        )}
                       </div>
                     ))}
-                    <div
-                      onClick={() => {
-                        const newId = Date.now();
-                        setEventTabs([...eventTabs, {
-                          id: newId,
-                          name: 'New Event',
-                          descriptionReported: '',
-                          descriptionCoded: '',
-                          chapter: '',
-                          block: '',
-                          category: '',
-                          entity: '',
-                          entityCode: '',
-                          seriousnessCriteria: [],
-                          otherSeriousnessText: '',
-                          isDiagnosis: false,
-                          isSymptoms: false,
-                          onsetDate: '',
-                          onsetFromLastDose: '',
-                          highlightedByReporter: '',
-                          stopDate: '',
-                          duration: '',
-                          onsetLatency: '',
-                          receiptDate: '',
-                          priorHistory: '',
-                          treatmentReceived: '',
-                          intensity: '',
-                          frequency: '',
-                          outcome: '',
-                          lackOfEfficacy: false,
-                          withdrawalReaction: false,
-                          progressionOfDisease: false,
-                          relatedStudyReported: '',
-                          relatedStudyConduct: '',
-                          droppedFromStudy: false
-                        }]);
-                        setActiveEventTab(newId);
-                      }}
-                      className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm cursor-pointer hover:bg-gray-100"
-                    >
-                      (New)
-                    </div>
+                    {!isReadOnly && !isQcCompleted && (
+                      <div
+                        onClick={() => {
+                          const newId = Date.now();
+                          setEventTabs([...eventTabs, {
+                            id: newId,
+                            name: 'New Event',
+                            descriptionReported: '',
+                            descriptionCoded: '',
+                            chapter: '',
+                            block: '',
+                            category: '',
+                            entity: '',
+                            entityCode: '',
+                            seriousnessCriteria: [],
+                            otherSeriousnessText: '',
+                            isDiagnosis: false,
+                            isSymptoms: false,
+                            onsetDate: '',
+                            onsetFromLastDose: '',
+                            highlightedByReporter: '',
+                            stopDate: '',
+                            duration: '',
+                            onsetLatency: '',
+                            receiptDate: '',
+                            priorHistory: '',
+                            treatmentReceived: '',
+                            intensity: '',
+                            frequency: '',
+                            outcome: '',
+                            lackOfEfficacy: false,
+                            withdrawalReaction: false,
+                            progressionOfDisease: false,
+                            relatedStudyReported: '',
+                            relatedStudyConduct: '',
+                            droppedFromStudy: false
+                          }]);
+                          setActiveEventTab(newId);
+                          isDirtyRef.current = true;
+                        }}
+                        className="px-6 py-0.5 text-[9px] bg-white text-gray-500 border border-gray-400 border-b-0 rounded-t-sm cursor-pointer hover:bg-gray-100"
+                      >
+                        (New)
+                      </div>
+                    )}
                   </div>
                   <div className="ml-auto flex gap-1 mb-0.5">
                     <button className="h-5 w-5 bg-white border border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-500 hover:bg-slate-50 transition-colors">&lt;</button>
@@ -4676,10 +4969,12 @@ export default function CaseDetailPage() {
                   <div className={cn(secHeader, "flex justify-between items-center px-2 py-0.5", isCollapsed('contactLog') && "border-b-0")}>
                     <span>Contact Log ({contacts.length})</span>
                     <div className="flex items-center gap-1">
-                      <div className="flex gap-0.5">
-                        <button type="button" onClick={handleAddContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 cursor-pointer hover:bg-gray-200">Add</button>
-                        <button type="button" onClick={handleDeleteContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 cursor-pointer hover:bg-gray-200">Delete</button>
-                      </div>
+                      {!isReadOnly && !isQcCompleted && (
+                        <div className="flex gap-0.5">
+                          <button type="button" onClick={handleAddContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 cursor-pointer hover:bg-gray-200">Add</button>
+                          <button type="button" onClick={handleDeleteContact} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 cursor-pointer hover:bg-gray-200">Delete</button>
+                        </div>
+                      )}
                       <CollapseBtn sectionKey="contactLog" className="ml-1" />
                     </div>
                   </div>
@@ -4747,12 +5042,14 @@ export default function CaseDetailPage() {
                       <span className="font-bold mr-1">Show</span>
                       <label className="flex items-center gap-1"><input type="radio" defaultChecked className="w-3 h-3" /> All</label>
                       <label className="flex items-center gap-1 mr-2"><input type="radio" className="w-3 h-3" /> Open</label>
-                      <div className="flex gap-0.5">
-                        <button type="button" onClick={handleAddActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400 cursor-pointer hover:bg-gray-200">Add</button>
-                        <button type="button" onClick={handleDeleteActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400 cursor-pointer hover:bg-gray-200">Delete</button>
-                        <button type="button" className="h-[18px] px-2 bg-gray-100 border border-gray-400">Up ▲</button>
-                        <button type="button" className="h-[18px] px-2 bg-gray-100 border border-gray-400">Down ▼</button>
-                      </div>
+                      {!isReadOnly && !isQcCompleted && (
+                        <div className="flex gap-0.5">
+                          <button type="button" onClick={handleAddActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400 cursor-pointer hover:bg-gray-200">Add</button>
+                          <button type="button" onClick={handleDeleteActionItem} className="h-[18px] px-2 bg-gray-100 border border-gray-400 cursor-pointer hover:bg-gray-200">Delete</button>
+                          <button type="button" className="h-[18px] px-2 bg-gray-100 border border-gray-400">Up ▲</button>
+                          <button type="button" className="h-[18px] px-2 bg-gray-100 border border-gray-400">Down ▼</button>
+                        </div>
+                      )}
                       <CollapseBtn sectionKey="actionItems" className="ml-1" />
                     </div>
                   </div>
@@ -4969,15 +5266,19 @@ export default function CaseDetailPage() {
                       <CollapseBtn sectionKey="notesAndAttachment" className="ml-1" />
                     </div>
                     <div className="flex gap-0.5">
-                      <input
-                        type="file"
-                        className="hidden"
-                        ref={fileInputRef}
-                        onChange={handleAttachFile}
-                      />
-                      <button onClick={triggerAttachNew} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Attach File</button>
-                      <button onClick={handleAddAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Add</button>
-                      <button onClick={handleDeleteAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Delete</button>
+                      {!isReadOnly && !isQcCompleted && (
+                        <>
+                          <input
+                            type="file"
+                            className="hidden"
+                            ref={fileInputRef}
+                            onChange={handleAttachFile}
+                          />
+                          <button onClick={triggerAttachNew} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Attach File</button>
+                          <button onClick={handleAddAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Add</button>
+                          <button onClick={handleDeleteAttachment} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400 hover:bg-gray-200 cursor-pointer font-medium">Delete</button>
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => toggleSection('notesAndAttachment')}
@@ -5115,9 +5416,13 @@ export default function CaseDetailPage() {
                       <CollapseBtn sectionKey="references" className="ml-1" />
                     </div>
                     <div className="flex gap-0.5">
-                      <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1 mr-1"><span className="text-[12px]">🔎</span> Select</button>
-                      <button onClick={handleAddReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
-                      <button onClick={handleDeleteReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
+                      {!isReadOnly && !isQcCompleted && (
+                        <>
+                          <button className="h-[18px] px-2 text-[10px] font-bold bg-white border border-gray-400 text-black flex items-center gap-1 mr-1"><span className="text-[12px]">🔎</span> Select</button>
+                          <button onClick={handleAddReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Add</button>
+                          <button onClick={handleDeleteReference} className="h-[18px] px-2 text-[10px] bg-gray-100 text-black border border-gray-400">Delete</button>
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => toggleSection('references')}
